@@ -9,7 +9,7 @@
 // Configuration
 const CONFIG = {
   BACKEND_URL: 'http://localhost:3000',
-  UPDATE_INTERVAL: 30000,
+  UPDATE_INTERVAL: 1000, // Update every second for accurate time tracking
   ACTIVITY_TIMEOUT: 30000,
   PRODUCTIVITY_THRESHOLD: 0.5, // Threshold for determining if content is productive
   CACHE_EXPIRY: 7 * 24 * 60 * 60 * 1000 // Cache expiry time (7 days in milliseconds)
@@ -22,6 +22,7 @@ let currentTab = {
   domain: '',
   title: '',
   startTime: null,
+  lastUpdateTime: null,
   isProductive: false,
   score: 0,
   categories: [],
@@ -44,6 +45,11 @@ let domainTracking = {};
 
 // URL analysis cache
 let urlCache = {};
+
+// Visibility tracking
+let isWindowActive = false;
+let isTabVisible = false;
+let lastActiveTime = null;
 
 // Initialize the extension
 async function init() {
@@ -70,8 +76,11 @@ async function init() {
   // Set up message listeners
   chrome.runtime.onMessage.addListener(handleMessages);
   
-  // Start periodic updates
-  setInterval(updateStats, CONFIG.UPDATE_INTERVAL);
+  // Set up visibility change listeners
+  setupVisibilityTracking();
+  
+  // Start periodic updates for time tracking
+  setInterval(updateTimeTracking, CONFIG.UPDATE_INTERVAL);
   
   // Get the current active tab
   const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
@@ -80,6 +89,33 @@ async function init() {
   }
   
   console.log('BattleTask background initialized');
+}
+
+/**
+ * Set up visibility tracking to monitor browser and tab visibility
+ */
+function setupVisibilityTracking() {
+  // Listen for window focus/blur events
+  chrome.windows.onFocusChanged.addListener(windowId => {
+    isWindowActive = windowId !== chrome.windows.WINDOW_ID_NONE;
+    console.log(`Window focus changed: ${isWindowActive ? 'focused' : 'unfocused'}`);
+  });
+  
+  // Listen for tab visibility changes via content script
+  chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+    if (message.action === 'visibilityChange') {
+      isTabVisible = message.isVisible;
+      console.log(`Tab visibility changed: ${isTabVisible ? 'visible' : 'hidden'}`);
+      sendResponse({ success: true });
+    }
+    return true;
+  });
+  
+  // Check initial window state
+  chrome.windows.getCurrent(window => {
+    isWindowActive = window.focused;
+    console.log(`Initial window state: ${isWindowActive ? 'focused' : 'unfocused'}`);
+  });
 }
 
 /**
@@ -114,9 +150,6 @@ async function handleTabActivated(activeInfo) {
       return;
     }
     
-    // Update time spent on previous tab
-    updateTimeSpent();
-    
     // Set current tab data
     const domain = extractDomain(tab.url);
     currentTab = {
@@ -124,7 +157,8 @@ async function handleTabActivated(activeInfo) {
       url: tab.url,
       domain: domain,
       title: tab.title || '',
-      startTime: Date.now(),
+      startTime: null, // Will be set after analysis
+      lastUpdateTime: null,
       isProductive: false,
       score: 0,
       categories: [],
@@ -138,6 +172,9 @@ async function handleTabActivated(activeInfo) {
     
     // Save current tab data
     await chrome.storage.local.set({ currentTab, stats });
+    
+    // Reset tab visibility state for the new tab
+    isTabVisible = true;
     
     // Check if URL is in cache before analyzing
     if (urlCache[tab.url]) {
@@ -170,9 +207,7 @@ function applyUrlCache(url) {
   currentTab.categories = cachedData.categories || [];
   currentTab.explanation = cachedData.explanation || 'Cached result';
   currentTab.isAnalyzing = false;
-  
-  // Reset the start time to now
-  currentTab.startTime = Date.now();
+  currentTab.lastUpdateTime = Date.now();
   currentTab.lastUpdated = Date.now();
   
   // Remove from analyzing domains
@@ -198,9 +233,6 @@ function handleTabUpdated(tabId, changeInfo, tab) {
     // Check if this is the current active tab
     chrome.tabs.query({ active: true, currentWindow: true }, async (tabs) => {
       if (tabs.length > 0 && tabs[0].id === tabId) {
-        // Update time spent on previous URL
-        updateTimeSpent();
-        
         // Update current tab data
         const domain = extractDomain(tab.url);
         currentTab = {
@@ -208,7 +240,8 @@ function handleTabUpdated(tabId, changeInfo, tab) {
           url: tab.url,
           domain: domain,
           title: tab.title || '',
-          startTime: Date.now(),
+          startTime: null, // Will be set after analysis
+          lastUpdateTime: null,
           isProductive: false,
           score: 0,
           categories: [],
@@ -259,6 +292,7 @@ async function analyzeTabTitle(title, url) {
       currentTab.explanation = 'Empty or new tab';
       currentTab.lastUpdated = Date.now();
       currentTab.isAnalyzing = false;
+      currentTab.lastUpdateTime = Date.now();
       
       // Remove from analyzing domains
       delete stats.analyzingDomains[domain];
@@ -296,9 +330,7 @@ async function analyzeTabTitle(title, url) {
     currentTab.categories = analysis.categories;
     currentTab.explanation = analysis.explanation;
     currentTab.isAnalyzing = false;
-    
-    // Reset the start time to now, since we're only counting time after analysis
-    currentTab.startTime = Date.now();
+    currentTab.lastUpdateTime = Date.now();
     currentTab.lastUpdated = Date.now();
     
     // Remove from analyzing domains
@@ -419,7 +451,9 @@ function handleMessages(message, sender, sendResponse) {
         productiveDomains: productiveDomains.slice(0, 5),
         nonProductiveDomains: nonProductiveDomains.slice(0, 5),
         domainTracking,
-        cacheSize: Object.keys(urlCache).length
+        cacheSize: Object.keys(urlCache).length,
+        isWindowActive,
+        isTabVisible
       };
       
       sendResponse({ success: true, data: statsWithDistribution });
@@ -452,17 +486,25 @@ function handleMessages(message, sender, sendResponse) {
 }
 
 /**
- * Update time spent on current tab
+ * Update time tracking based on visibility and focus
  */
-function updateTimeSpent() {
-  if (currentTab.startTime && !currentTab.isAnalyzing) {
+function updateTimeTracking() {
+  // Only track time if not analyzing, window is active, and tab is visible
+  if (!currentTab.isAnalyzing && isWindowActive && isTabVisible) {
     const now = Date.now();
-    const timeSpent = now - currentTab.startTime;
     
-    // Only count if the time is reasonable (less than 30 minutes)
-    if (timeSpent > 0 && timeSpent < 1800000) {
-      console.log(`Time spent on ${currentTab.domain}: ${Math.floor(timeSpent / 1000)}s`);
-      
+    // If this is the first update after becoming visible/active
+    if (!currentTab.lastUpdateTime) {
+      currentTab.lastUpdateTime = now;
+      chrome.storage.local.set({ currentTab });
+      return;
+    }
+    
+    // Calculate time since last update
+    const timeSinceLastUpdate = now - currentTab.lastUpdateTime;
+    
+    // Only count if the time is reasonable (less than 30 seconds)
+    if (timeSinceLastUpdate > 0 && timeSinceLastUpdate < 30000) {
       // Initialize tracking for this domain if it doesn't exist
       if (!domainTracking[currentTab.domain]) {
         domainTracking[currentTab.domain] = {
@@ -474,15 +516,16 @@ function updateTimeSpent() {
       }
       
       // Update domain-specific tracking based on current productivity state
-      // This ensures time is only added to one category at a time
       if (currentTab.isProductive) {
-        domainTracking[currentTab.domain].productiveTime += timeSpent;
+        domainTracking[currentTab.domain].productiveTime += timeSinceLastUpdate;
         domainTracking[currentTab.domain].productiveScore = currentTab.score;
-        stats.productiveTime += timeSpent;
+        stats.productiveTime += timeSinceLastUpdate;
+        console.log(`Added ${Math.round(timeSinceLastUpdate/1000)}s to productive time for ${currentTab.domain}`);
       } else {
-        domainTracking[currentTab.domain].nonProductiveTime += timeSpent;
+        domainTracking[currentTab.domain].nonProductiveTime += timeSinceLastUpdate;
         domainTracking[currentTab.domain].nonProductiveScore = currentTab.score;
-        stats.nonProductiveTime += timeSpent;
+        stats.nonProductiveTime += timeSinceLastUpdate;
+        console.log(`Added ${Math.round(timeSinceLastUpdate/1000)}s to non-productive time for ${currentTab.domain}`);
       }
       
       // Update domain stats for backward compatibility
@@ -505,16 +548,13 @@ function updateTimeSpent() {
       // Save tracking and stats
       chrome.storage.local.set({ domainTracking, stats });
     }
-  }
-}
-
-/**
- * Periodically update stats
- */
-function updateStats() {
-  if (currentTab.startTime && !currentTab.isAnalyzing) {
-    updateTimeSpent();
-    currentTab.startTime = Date.now();
+    
+    // Update last update time
+    currentTab.lastUpdateTime = now;
+    chrome.storage.local.set({ currentTab });
+  } else if (currentTab.lastUpdateTime) {
+    // If we're not tracking time but have a lastUpdateTime, reset it
+    currentTab.lastUpdateTime = null;
     chrome.storage.local.set({ currentTab });
   }
 }
