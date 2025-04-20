@@ -6,14 +6,16 @@
  * 2. REST API for Chrome extension
  */
 
+// Load environment variables from .env file if present (for local development)
 require('dotenv').config();
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 
 // Check if API key is available
 if (!GEMINI_API_KEY) {
-  console.error('ERROR: GEMINI_API_KEY is not set in .env file');
-  console.error('Please create a .env file with GEMINI_API_KEY=your_api_key');
-  process.exit(1);
+  console.error('WARNING: GEMINI_API_KEY is not set in environment variables');
+  console.error('API functionality will not work without a valid API key');
+  // Not exiting process - allows server to start for health checks
+  // process.exit(1); 
 }
 
 const express = require('express');
