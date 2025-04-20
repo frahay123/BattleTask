@@ -1,0 +1,659 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>BattleTask</title>
+  <style>
+    :root {
+      --bg-color: #1a1a1a;
+      --text-color: #f0f0f0;
+      --card-bg: #2a2a2a;
+      --border-color: #3a3a3a;
+      --productive-color: #4caf50;
+      --non-productive-color: #f44336;
+      --neutral-color: #9e9e9e;
+      --highlight-color: #2196f3;
+      --shadow-color: rgba(0, 0, 0, 0.3);
+    }
+
+    body.light-theme {
+      --bg-color: #f5f5f5;
+      --text-color: #333333;
+      --card-bg: #ffffff;
+      --border-color: #dddddd;
+      --shadow-color: rgba(0, 0, 0, 0.1);
+    }
+
+    body.dark-theme {
+      --bg-color: #1a1a1a;
+      --text-color: #f0f0f0;
+      --card-bg: #2a2a2a;
+      --border-color: #3a3a3a;
+      --shadow-color: rgba(0, 0, 0, 0.3);
+    }
+
+    body {
+      width: 380px;
+      min-height: 500px;
+      margin: 0;
+      padding: 0;
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+      background-color: var(--bg-color);
+      color: var(--text-color);
+      transition: all 0.3s ease;
+    }
+
+    .container {
+      padding: 16px;
+    }
+
+    header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 16px;
+    }
+
+    h1 {
+      margin: 0;
+      font-size: 1.5rem;
+      font-weight: 600;
+    }
+
+    .theme-toggle {
+      display: flex;
+      align-items: center;
+    }
+
+    .theme-toggle-btn {
+      background: none;
+      border: none;
+      cursor: pointer;
+      width: 40px;
+      height: 40px;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 20px;
+      transition: background-color 0.3s;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .dark-theme .theme-toggle-btn {
+      background-color: #2d2d2d;
+      box-shadow: 0 0 10px rgba(255, 255, 255, 0.1);
+    }
+
+    .light-theme .theme-toggle-btn {
+      background-color: #f0f0f0;
+      box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
+    }
+
+    .theme-toggle-btn:hover {
+      transform: scale(1.1);
+    }
+
+    .theme-icon {
+      position: absolute;
+      transition: transform 0.5s, opacity 0.5s;
+    }
+
+    .moon-icon {
+      color: #FFC107;
+    }
+
+    .sun-icon {
+      color: #FF9800;
+    }
+
+    .dark-theme .moon-icon {
+      transform: translateY(0);
+      opacity: 1;
+    }
+
+    .dark-theme .sun-icon {
+      transform: translateY(30px);
+      opacity: 0;
+    }
+
+    .light-theme .moon-icon {
+      transform: translateY(-30px);
+      opacity: 0;
+    }
+
+    .light-theme .sun-icon {
+      transform: translateY(0);
+      opacity: 1;
+    }
+
+    .card {
+      background-color: var(--card-bg);
+      border-radius: 8px;
+      padding: 16px;
+      margin-bottom: 16px;
+      box-shadow: 0 2px 4px var(--shadow-color);
+      animation: fadeIn 0.5s ease;
+    }
+
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(10px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    @keyframes pulse {
+      0% { transform: scale(1); }
+      50% { transform: scale(1.05); }
+      100% { transform: scale(1); }
+    }
+
+    @keyframes shimmer {
+      0% { background-position: -200% 0; }
+      100% { background-position: 200% 0; }
+    }
+
+    .analyzing {
+      position: relative;
+      overflow: hidden;
+    }
+
+    .analyzing::after {
+      content: "";
+      position: absolute;
+      top: 0;
+      right: 0;
+      bottom: 0;
+      left: 0;
+      background: linear-gradient(90deg, 
+        rgba(255, 255, 255, 0.0) 0%, 
+        rgba(255, 255, 255, 0.1) 50%, 
+        rgba(255, 255, 255, 0.0) 100%);
+      background-size: 200% 100%;
+      animation: shimmer 1.5s infinite;
+    }
+
+    .current-site {
+      display: flex;
+      align-items: center;
+      margin-bottom: 12px;
+    }
+
+    .site-url {
+      font-weight: 500;
+      margin-left: 8px;
+    }
+
+    .status-indicator {
+      width: 12px;
+      height: 12px;
+      border-radius: 50%;
+      margin-right: 8px;
+    }
+
+    .status-indicator.productive {
+      background-color: var(--productive-color);
+      animation: pulse 2s infinite;
+    }
+
+    .status-indicator.non-productive {
+      background-color: var(--non-productive-color);
+      animation: pulse 2s infinite;
+    }
+
+    .status-indicator.analyzing {
+      background-color: var(--neutral-color);
+      animation: pulse 2s infinite;
+    }
+
+    .status-container {
+      display: flex;
+      flex-direction: column;
+    }
+
+    .status {
+      font-weight: 600;
+      margin-bottom: 4px;
+    }
+
+    .status.productive {
+      color: var(--productive-color);
+    }
+
+    .status.non-productive {
+      color: var(--non-productive-color);
+    }
+
+    .productivity-score {
+      font-size: 1.2rem;
+      font-weight: bold;
+      text-align: center;
+      margin: 10px 0;
+    }
+
+    .reason {
+      font-size: 0.9rem;
+      color: var(--neutral-color);
+      max-height: 0;
+      overflow: hidden;
+      transition: max-height 0.3s ease;
+    }
+
+    .reason.expanded {
+      max-height: 200px;
+      margin-top: 8px;
+    }
+
+    .toggle-details {
+      background: none;
+      border: none;
+      color: var(--highlight-color);
+      cursor: pointer;
+      font-size: 0.9rem;
+      padding: 4px 0;
+      text-align: center;
+      width: 100%;
+      margin-top: 8px;
+    }
+
+    .toggle-details:hover {
+      text-decoration: underline;
+    }
+
+    .stats {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+      margin-bottom: 16px;
+    }
+
+    .stat-item {
+      text-align: center;
+      transition: transform 0.3s ease;
+    }
+
+    .stat-item:hover {
+      transform: translateY(-5px);
+    }
+
+    .stat-value {
+      font-size: 1.5rem;
+      font-weight: 600;
+      margin-bottom: 4px;
+    }
+
+    .stat-label {
+      font-size: 0.9rem;
+      color: var(--neutral-color);
+    }
+
+    .stat-item.productive .stat-value {
+      color: var(--productive-color);
+    }
+
+    .stat-item.non-productive .stat-value {
+      color: var(--non-productive-color);
+    }
+
+    .progress-container {
+      margin-bottom: 16px;
+    }
+
+    .progress-bar-container {
+      width: 100%;
+      height: 8px;
+      background-color: var(--border-color);
+      border-radius: 4px;
+      overflow: hidden;
+      margin-bottom: 8px;
+    }
+
+    .progress-bar {
+      height: 100%;
+      background-color: var(--productive-color);
+      border-radius: 4px;
+      transition: width 0.8s ease-in-out;
+    }
+
+    .progress-label {
+      font-size: 0.9rem;
+      color: var(--neutral-color);
+      text-align: center;
+    }
+
+    .tabs {
+      display: flex;
+      margin-bottom: 16px;
+      border-bottom: 1px solid var(--border-color);
+    }
+
+    .tab {
+      padding: 8px 16px;
+      cursor: pointer;
+      border-bottom: 2px solid transparent;
+      transition: all 0.3s ease;
+    }
+
+    .tab.active {
+      border-bottom: 2px solid var(--highlight-color);
+      color: var(--highlight-color);
+    }
+
+    .tab-content {
+      display: none;
+      animation: fadeIn 0.5s ease;
+    }
+
+    .tab-content.active {
+      display: block;
+    }
+
+    .domain-list {
+      list-style: none;
+      padding: 0;
+      margin: 0;
+    }
+
+    .domain-item {
+      display: flex;
+      flex-direction: column;
+      padding: 12px 0;
+      border-bottom: 1px solid var(--border-color);
+      transition: background-color 0.3s ease;
+    }
+
+    .domain-item:hover {
+      background-color: rgba(255, 255, 255, 0.05);
+    }
+
+    .domain-item:last-child {
+      border-bottom: none;
+    }
+
+    .domain-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 8px;
+      width: 100%;
+    }
+
+    .domain-name {
+      display: flex;
+      align-items: center;
+      max-width: 70%;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      font-weight: 500;
+    }
+
+    .domain-time {
+      font-size: 0.9rem;
+      font-weight: 600;
+    }
+
+    .domain-time.productive {
+      color: var(--productive-color);
+    }
+
+    .domain-time.non-productive {
+      color: var(--non-productive-color);
+    }
+
+    .domain-bar {
+      display: none;
+    }
+
+    .empty-list {
+      color: var(--neutral-color);
+      font-style: italic;
+      text-align: center;
+      padding: 16px 0;
+    }
+
+    .actions {
+      display: flex;
+      justify-content: center;
+      margin-top: 16px;
+    }
+
+    .button {
+      padding: 8px 16px;
+      border: none;
+      border-radius: 4px;
+      background-color: var(--highlight-color);
+      color: white;
+      font-weight: 500;
+      cursor: pointer;
+      transition: all 0.3s ease;
+    }
+
+    .button:hover {
+      opacity: 0.9;
+      transform: translateY(-2px);
+    }
+
+    .modal {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background-color: rgba(0, 0, 0, 0.5);
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      z-index: 100;
+      animation: fadeIn 0.3s ease;
+    }
+
+    .modal-content {
+      background-color: var(--card-bg);
+      border-radius: 8px;
+      padding: 16px;
+      width: 80%;
+      max-width: 300px;
+      animation: scaleIn 0.3s ease;
+    }
+
+    @keyframes scaleIn {
+      from { transform: scale(0.9); opacity: 0; }
+      to { transform: scale(1); opacity: 1; }
+    }
+
+    .button-container {
+      display: flex;
+      justify-content: flex-end;
+      margin-top: 16px;
+    }
+
+    .button.cancel {
+      background-color: var(--border-color);
+      margin-right: 8px;
+    }
+
+    .button.confirm {
+      background-color: var(--non-productive-color);
+    }
+
+    .youtube-icon {
+      display: inline-block;
+      width: 16px;
+      height: 16px;
+      margin-right: 6px;
+      background-color: #ff0000;
+      border-radius: 4px;
+      position: relative;
+    }
+
+    .youtube-icon::after {
+      content: "";
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-40%, -50%);
+      width: 0;
+      height: 0;
+      border-style: solid;
+      border-width: 4px 0 4px 6px;
+      border-color: transparent transparent transparent white;
+    }
+
+    .domain-badge {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 20px;
+      height: 20px;
+      border-radius: 50%;
+      margin-right: 8px;
+      font-size: 12px;
+      font-weight: bold;
+    }
+
+    .domain-badge.productive {
+      background-color: var(--productive-color);
+      color: white;
+    }
+
+    .domain-badge.non-productive {
+      background-color: var(--non-productive-color);
+      color: white;
+    }
+
+    .dual-category-indicator {
+      margin-left: 4px;
+      font-size: 12px;
+      cursor: help;
+    }
+
+    .split-tag {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      margin-left: 8px;
+      padding: 2px 6px;
+      border-radius: 10px;
+      font-size: 10px;
+      font-weight: bold;
+      cursor: help;
+      background-color: var(--border-color);
+      color: var(--text-color);
+      border: 1px solid var(--border-color);
+    }
+
+    .productive .split-tag {
+      background-color: rgba(76, 175, 80, 0.2);
+      border: 1px solid var(--productive-color);
+      color: var(--productive-color);
+    }
+
+    .non-productive .split-tag {
+      background-color: rgba(244, 67, 54, 0.2);
+      border: 1px solid var(--non-productive-color);
+      color: var(--non-productive-color);
+    }
+
+    body.light-theme .domain-item:hover {
+      background-color: rgba(0, 0, 0, 0.03);
+    }
+
+    #cache-info {
+      font-size: 12px;
+      opacity: 0.7;
+      margin-right: 10px;
+    }
+
+    #clear-cache {
+      background: none;
+      border: 1px solid #FF9800;
+      color: #FF9800;
+      padding: 6px 12px;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 12px;
+      transition: background-color 0.3s, color 0.3s;
+      margin-right: 8px;
+    }
+
+    #clear-cache:hover {
+      background-color: #FF9800;
+      color: white;
+    }
+  </style>
+</head>
+<body class="dark-theme">
+  <div class="container">
+    <header>
+      <h1>BattleTask</h1>
+      <div class="theme-toggle">
+        <button class="theme-toggle-btn" id="theme-toggle-btn">
+          <span class="theme-icon moon-icon">🌙</span>
+          <span class="theme-icon sun-icon">☀️</span>
+        </button>
+      </div>
+    </header>
+
+    <div class="card" id="current-site-card">
+      <div class="current-site">
+        <span class="status-indicator" id="status-indicator"></span>
+        <span class="site-url" id="site-url">Loading...</span>
+      </div>
+      <div class="status-container">
+        <div class="status" id="productivity-status">Analyzing...</div>
+        <div class="productivity-score" id="productivity-score">Score: 0/100</div>
+        <button class="toggle-details" id="toggle-details">Show Details</button>
+        <div class="reason" id="status-reason">Please wait while we analyze this site...</div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="stats">
+        <div class="stat-item productive">
+          <div class="stat-value" id="productive-time">0m</div>
+          <div class="stat-label">Productive</div>
+        </div>
+        <div class="stat-item non-productive">
+          <div class="stat-value" id="non-productive-time">0m</div>
+          <div class="stat-label">Non-Productive</div>
+        </div>
+      </div>
+      <div class="progress-container">
+        <div class="progress-bar-container">
+          <div class="progress-bar" id="progress-bar" style="width: 0%"></div>
+        </div>
+        <div class="progress-label">
+          <span id="productivity-percentage">0%</span> Productive
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="tabs">
+        <div class="tab active" data-tab="productive">Productive</div>
+        <div class="tab" data-tab="non-productive">Non-Productive</div>
+      </div>
+      <div class="tab-content active" id="productive-content">
+        <ul class="domain-list" id="productive-domain-list">
+          <li class="empty-list">No productive sites visited yet</li>
+        </ul>
+      </div>
+      <div class="tab-content" id="non-productive-content">
+        <ul class="domain-list" id="non-productive-domain-list">
+          <li class="empty-list">No non-productive sites visited yet</li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="actions">
+      <span id="cache-info">Cache: 0 URLs</span>
+      <button id="clear-cache">Clear Cache</button>
+      <button class="button" id="reset-stats">Reset Statistics</button>
+    </div>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>
