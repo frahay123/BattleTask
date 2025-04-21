@@ -321,6 +321,23 @@ async function analyzeTabTitle(title, url) {
 
     const analysis = await response.json();
     
+    // Normalize score to ensure it's in 0-100 range
+    if (!analysis.score && analysis.score !== 0) analysis.score = 0;
+    
+    // Convert score to a number if it's a string
+    if (typeof analysis.score === 'string') {
+      analysis.score = parseFloat(analysis.score);
+    }
+    
+    // Normalize score to 0-100 range
+    if (analysis.score <= 1 && analysis.score >= 0) {
+      // If score is in 0-1 range (float), multiply by 100
+      analysis.score = Math.round(analysis.score * 100);
+    } else {
+      // Otherwise, cap it at 100
+      analysis.score = Math.min(100, Math.max(0, analysis.score));
+    }
+    
     // Determine if the content is productive based on the score threshold
     const isProductive = analysis.score >= CONFIG.PRODUCTIVITY_THRESHOLD;
     

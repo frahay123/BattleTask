@@ -155,7 +155,10 @@ document.addEventListener('DOMContentLoaded', function() {
     }
     
     // Set status indicator and text
-    if (tabData.isProductive) {
+    const scoreValue = Math.min(100, tabData.score || 0);
+    const isProductive = scoreValue >= 50; // Enforce 50/100 threshold in the UI
+    
+    if (isProductive) {
       statusIndicator.className = 'status-indicator productive';
       productivityStatus.textContent = 'Productive';
       productivityStatus.className = 'status productive';
@@ -166,7 +169,6 @@ document.addEventListener('DOMContentLoaded', function() {
     }
     
     // Set productivity score
-    const scoreValue = Math.min(100, tabData.score || 0);
     productivityScore.textContent = `Score: ${scoreValue}/100`;
     
     // Set explanation
