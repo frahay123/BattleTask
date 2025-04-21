@@ -86,8 +86,24 @@ async function analyzeTabTitle(title) {
 
     // Ensure required fields exist
     if (!analysis.isProductive) analysis.isProductive = false;
-    if (!analysis.score) analysis.score = 0;
-    if (analysis.score > 100) analysis.score = 100; // Cap score at 100
+    
+    // Handle score normalization
+    if (!analysis.score && analysis.score !== 0) analysis.score = 0;
+    
+    // Convert score to a number if it's a string
+    if (typeof analysis.score === 'string') {
+      analysis.score = parseFloat(analysis.score);
+    }
+    
+    // Normalize score to 0-100 range
+    if (analysis.score <= 1 && analysis.score >= 0) {
+      // If score is in 0-1 range (float), multiply by 100
+      analysis.score = Math.round(analysis.score * 100);
+    } else {
+      // Otherwise, cap it at 100
+      analysis.score = Math.min(100, Math.max(0, analysis.score));
+    }
+    
     if (!analysis.categories) analysis.categories = [];
     if (!analysis.explanation) analysis.explanation = '';
 
