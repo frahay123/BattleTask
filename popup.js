@@ -166,7 +166,7 @@ document.addEventListener('DOMContentLoaded', function() {
     }
     
     // Set productivity score
-    const scoreValue = Math.round(tabData.score * 100);
+    const scoreValue = Math.min(100, tabData.score || 0);
     productivityScore.textContent = `Score: ${scoreValue}/100`;
     
     // Set explanation
