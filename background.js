@@ -533,7 +533,9 @@ function updateTimeTracking() {
       }
       
       // Update domain-specific tracking based on current productivity state
-      if (currentTab.isProductive) {
+      const isReallyProductive = currentTab.score >= CONFIG.PRODUCTIVITY_THRESHOLD;
+      
+      if (isReallyProductive) {
         domainTracking[currentTab.domain].productiveTime += timeSinceLastUpdate;
         domainTracking[currentTab.domain].productiveScore = currentTab.score;
         stats.productiveTime += timeSinceLastUpdate;
