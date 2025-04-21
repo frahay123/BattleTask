@@ -202,8 +202,9 @@ function applyUrlCache(url) {
   const domain = extractDomain(url);
   
   // Update current tab with cached analysis results
-  currentTab.isProductive = cachedData.isProductive;
   currentTab.score = cachedData.score;
+  // Apply the productivity threshold consistently to cached results
+  currentTab.isProductive = currentTab.score >= CONFIG.PRODUCTIVITY_THRESHOLD;
   currentTab.categories = cachedData.categories || [];
   currentTab.explanation = cachedData.explanation || 'Cached result';
   currentTab.isAnalyzing = false;
