@@ -11,7 +11,7 @@ const CONFIG = {
   BACKEND_URL: 'https://battletask-279027565964.us-central1.run.app',
   UPDATE_INTERVAL: 1000, // Update every second for accurate time tracking
   ACTIVITY_TIMEOUT: 30000,
-  PRODUCTIVITY_THRESHOLD: 0.5, // Threshold for determining if content is productive
+  PRODUCTIVITY_THRESHOLD: 50, // Threshold for determining if content is productive
   CACHE_EXPIRY: 7 * 24 * 60 * 60 * 1000 // Cache expiry time (7 days in milliseconds)
 };
 
