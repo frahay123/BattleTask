@@ -33,6 +33,25 @@ document.addEventListener('visibilitychange', handleVisibilityChange);
 init();
 
 /**
+ * Safely send a message to the background script
+ * Handles extension context invalidation errors
+ */
+function safeSendMessage(message, callback) {
+  try {
+    // Check if extension context is valid
+    if (chrome.runtime && chrome.runtime.id) {
+      chrome.runtime.sendMessage(message, response => {
+        if (callback) callback(response);
+      });
+    } else {
+      console.warn('Extension context invalidated, cannot send message');
+    }
+  } catch (error) {
+    console.warn('Error sending message to background script:', error);
+  }
+}
+
+/**
  * Initialize the content script
  */
 function init() {
@@ -48,7 +67,7 @@ function init() {
   notifyVisibilityChange(isVisible);
   
   // Notify the background script that the page has loaded
-  chrome.runtime.sendMessage({
+  safeSendMessage({
     action: 'pageLoaded',
     url: window.location.href,
     title: document.title,
@@ -57,7 +76,7 @@ function init() {
   
   // Handle unload
   window.addEventListener('beforeunload', () => {
-    chrome.runtime.sendMessage({
+    safeSendMessage({
       action: 'pageUnloaded',
       url: window.location.href
     });
@@ -92,7 +111,7 @@ function handleFullscreenChange() {
     }
     
     // Send message to background script
-    chrome.runtime.sendMessage({
+    safeSendMessage({
       action: 'fullscreenChange',
       isFullscreen: isFullscreen,
       isVideoFullscreen: videoFullscreen,
@@ -112,7 +131,7 @@ function recordActivity() {
   // If the page was inactive, notify that it's now active
   if (!isPageActive) {
     isPageActive = true;
-    chrome.runtime.sendMessage({
+    safeSendMessage({
       action: 'activityChange',
       isActive: true,
       url: window.location.href,
@@ -131,7 +150,7 @@ function checkActivity() {
   // If inactive for more than 60 seconds, mark as inactive
   if (inactiveTime > 60000 && isPageActive) {
     isPageActive = false;
-    chrome.runtime.sendMessage({
+    safeSendMessage({
       action: 'activityChange',
       isActive: false,
       url: window.location.href,
@@ -158,15 +177,13 @@ function handleVisibilityChange() {
  * Notify the background script about visibility changes
  */
 function notifyVisibilityChange(isVisible) {
-  chrome.runtime.sendMessage({
+  safeSendMessage({
     action: 'visibilityChange',
     isVisible: isVisible,
     url: window.location.href,
     title: document.title
   }, response => {
-    if (chrome.runtime.lastError) {
-      console.error('Error sending visibility change:', chrome.runtime.lastError);
-    } else if (response && response.success) {
+    if (response && response.success) {
       console.log(`Successfully notified background of visibility: ${isVisible}`);
     }
   });
