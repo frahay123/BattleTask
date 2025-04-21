@@ -257,12 +257,18 @@ function handleTabUpdated(tabId, changeInfo, tab) {
         // Save current tab data
         await chrome.storage.local.set({ currentTab, stats });
         
-        // Check if URL is in cache before analyzing
-        if (urlCache[tab.url]) {
-          applyUrlCache(tab.url);
-        } else {
-          // Analyze the new tab title
+        // Always analyze content for YouTube URLs to handle dynamic content like shorts
+        if (domain.includes('youtube.com') || domain.includes('youtu.be')) {
+          // For YouTube, always analyze fresh content
           analyzeTabTitle(tab.title, tab.url);
+        } else {
+          // For other sites, check cache first
+          if (urlCache[tab.url]) {
+            applyUrlCache(tab.url);
+          } else {
+            // Analyze the new tab title
+            analyzeTabTitle(tab.title, tab.url);
+          }
         }
       }
     });
@@ -272,8 +278,14 @@ function handleTabUpdated(tabId, changeInfo, tab) {
     currentTab.title = changeInfo.title;
     chrome.storage.local.set({ currentTab });
     
-    // Only re-analyze if the URL is not in cache
-    if (!urlCache[tab.url]) {
+    const domain = extractDomain(tab.url);
+    
+    // Always re-analyze YouTube content when title changes (for shorts, videos, etc.)
+    if (domain.includes('youtube.com') || domain.includes('youtu.be')) {
+      analyzeTabTitle(changeInfo.title, tab.url);
+    } 
+    // For other sites, only re-analyze if not in cache
+    else if (!urlCache[tab.url]) {
       analyzeTabTitle(changeInfo.title, tab.url);
     }
   }
