@@ -16,6 +16,7 @@
   "host_permissions": [
     "http://localhost:3000/*",
     "https://battletask-yqkrjdcnrq-uc.a.run.app/*",
+    "https://battletask-279027565964.us-central1.run.app/*",
     "https://generativelanguage.googleapis.com/*"
   ],
   "content_security_policy": {

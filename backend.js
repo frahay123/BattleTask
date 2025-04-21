@@ -105,7 +105,12 @@ async function analyzeTabTitle(title) {
 
 // Health check endpoint
 app.get('/', (req, res) => {
-  res.json({ status: 'ok', message: 'BattleTask Backend Server is running' });
+  res.json({
+    status: 'ok',
+    message: 'BattleTask API is running',
+    apiKeyConfigured: !!GEMINI_API_KEY,
+    timestamp: new Date().toISOString()
+  });
 });
 
 // Save tab data and analyze educational content
