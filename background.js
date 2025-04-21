@@ -8,7 +8,7 @@
 
 // Configuration
 const CONFIG = {
-  BACKEND_URL: 'http://localhost:3000',
+  BACKEND_URL: 'https://battletask-yqkrjdcnrq-uc.a.run.app',
   UPDATE_INTERVAL: 1000, // Update every second for accurate time tracking
   ACTIVITY_TIMEOUT: 30000,
   PRODUCTIVITY_THRESHOLD: 0.5, // Threshold for determining if content is productive
