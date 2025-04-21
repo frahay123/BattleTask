@@ -87,6 +87,7 @@ async function analyzeTabTitle(title) {
     // Ensure required fields exist
     if (!analysis.isProductive) analysis.isProductive = false;
     if (!analysis.score) analysis.score = 0;
+    if (analysis.score > 100) analysis.score = 100; // Cap score at 100
     if (!analysis.categories) analysis.categories = [];
     if (!analysis.explanation) analysis.explanation = '';
 
