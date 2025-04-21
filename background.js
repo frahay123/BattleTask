@@ -508,6 +508,31 @@ function handleMessages(message, sender, sendResponse) {
       sendResponse({ success: true });
       break;
       
+    case 'analyzeYouTubeContent':
+      // Special handler for YouTube content changes detected by youtube-observer.js
+      console.log('YouTube content change detected:', message.title);
+      
+      // Update current tab with new URL and title
+      if (currentTab && currentTab.domain && 
+          (currentTab.domain.includes('youtube.com') || currentTab.domain.includes('youtu.be'))) {
+        
+        // Update the current tab data
+        currentTab.url = message.url;
+        currentTab.title = message.title;
+        currentTab.isAnalyzing = true;
+        currentTab.explanation = 'Analyzing...';
+        currentTab.lastUpdated = Date.now();
+        
+        // Save updated state
+        chrome.storage.local.set({ currentTab });
+        
+        // Immediately analyze the new content
+        analyzeTabTitle(message.title, message.url);
+      }
+      
+      sendResponse({ success: true });
+      break;
+      
     default:
       sendResponse({ success: false, error: 'Unknown action' });
   }
