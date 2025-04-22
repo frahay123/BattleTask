@@ -172,8 +172,12 @@ async function handleTabActivated(activeInfo) {
     // Get tab details
     const tab = await chrome.tabs.get(activeInfo.tabId);
     
-    // Skip chrome:// urls and extension pages
-    if (!tab.url || tab.url.startsWith('chrome://') || tab.url.startsWith('chrome-extension://')) {
+    // Skip chrome:// urls, extension pages, and new tabs
+    if (!tab.url || 
+        tab.url.startsWith('chrome://') || 
+        tab.url.startsWith('chrome-extension://') ||
+        (tab.url === 'about:blank' || tab.title === 'New Tab' || tab.url.startsWith('chrome://newtab'))) {
+      console.log('Ignoring new tab or internal browser page');
       return;
     }
     
@@ -250,8 +254,12 @@ function applyUrlCache(url) {
 function handleTabUpdated(tabId, changeInfo, tab) {
   // Only proceed if the URL has changed
   if (changeInfo.url) {
-    // Skip chrome:// urls and extension pages
-    if (!tab.url || tab.url.startsWith('chrome://') || tab.url.startsWith('chrome-extension://')) {
+    // Skip chrome:// urls, extension pages, and new tabs
+    if (!tab.url || 
+        tab.url.startsWith('chrome://') || 
+        tab.url.startsWith('chrome-extension://') ||
+        (tab.url === 'about:blank' || tab.title === 'New Tab' || tab.url.startsWith('chrome://newtab'))) {
+      console.log('Ignoring new tab or internal browser page');
       return;
     }
     
