@@ -29,7 +29,7 @@ const PORT = process.env.PORT || 3000;
 
 // Gemini API configuration
 const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
-const model = genAI.getGenerativeModel({ model: "text-bison-lite" });
+const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
 
 // Middleware
 app.use(cors());
