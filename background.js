@@ -12,7 +12,9 @@ const CONFIG = {
   UPDATE_INTERVAL: 1000, // Update every second for accurate time tracking
   ACTIVITY_TIMEOUT: 30000,
   PRODUCTIVITY_THRESHOLD: 50, // Threshold for determining if content is productive
-  CACHE_EXPIRY: 7 * 24 * 60 * 60 * 1000 // Cache expiry time (7 days in milliseconds)
+  CACHE_EXPIRY: 7 * 24 * 60 * 60 * 1000, // Cache expiry time (7 days in milliseconds)
+  ANALYSIS_TIMEOUT: 10000, // 10 seconds timeout for analysis
+  MAX_TIME_GAP: 120000 // Allow up to 2 minutes between updates (handles suspension)
 };
 
 // State tracking
@@ -99,6 +101,9 @@ function setupVisibilityTracking() {
   chrome.windows.onFocusChanged.addListener(windowId => {
     isWindowActive = windowId !== chrome.windows.WINDOW_ID_NONE;
     console.log(`Window focus changed: ${isWindowActive ? 'focused' : 'unfocused'}`);
+    
+    // Force a visibility check when window focus changes
+    checkTabVisibility();
   });
   
   // Listen for tab visibility changes via content script
@@ -115,7 +120,29 @@ function setupVisibilityTracking() {
   chrome.windows.getCurrent(window => {
     isWindowActive = window.focused;
     console.log(`Initial window state: ${isWindowActive ? 'focused' : 'unfocused'}`);
+    
+    // Force initial visibility check
+    checkTabVisibility();
   });
+  
+  // Set up periodic visibility checks (every 10 seconds)
+  setInterval(checkTabVisibility, 10000);
+}
+
+/**
+ * Check tab visibility by querying the active tab
+ * This helps recover from missed visibility events
+ */
+async function checkTabVisibility() {
+  try {
+    const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
+    if (tabs.length > 0 && tabs[0].id === currentTab.id) {
+      // If this is our current tracked tab and it's active, it must be visible
+      isTabVisible = true;
+    }
+  } catch (error) {
+    console.error('Error checking tab visibility:', error);
+  }
 }
 
 /**
@@ -199,22 +226,21 @@ function applyUrlCache(url) {
   
   console.log(`Using cached analysis for ${url}`);
   
-  const domain = extractDomain(url);
-  
-  // Update current tab with cached analysis results
+  // Apply cached data to current tab
+  currentTab.isProductive = cachedData.isProductive;
   currentTab.score = cachedData.score;
-  // Apply the productivity threshold consistently to cached results
-  currentTab.isProductive = currentTab.score >= CONFIG.PRODUCTIVITY_THRESHOLD;
-  currentTab.categories = cachedData.categories || [];
-  currentTab.explanation = cachedData.explanation || 'Cached result';
+  currentTab.categories = cachedData.categories;
+  currentTab.explanation = cachedData.explanation;
   currentTab.isAnalyzing = false;
-  currentTab.lastUpdateTime = Date.now();
-  currentTab.lastUpdated = Date.now();
+  currentTab.startTime = Date.now();
+  currentTab.lastUpdateTime = Date.now(); // Set this to start tracking time immediately
   
-  // Remove from analyzing domains
-  delete stats.analyzingDomains[domain];
+  // Remove this domain from analyzing list
+  if (stats.analyzingDomains[currentTab.domain]) {
+    delete stats.analyzingDomains[currentTab.domain];
+  }
   
-  // Save updated state
+  // Save current tab data
   chrome.storage.local.set({ currentTab, stats });
 }
 
@@ -296,30 +322,29 @@ function handleTabUpdated(tabId, changeInfo, tab) {
  */
 async function analyzeTabTitle(title, url) {
   try {
-    const domain = extractDomain(url);
+    // Set up analysis timeout
+    const analysisTimeout = setTimeout(() => {
+      // If analysis takes too long, mark as non-productive but stop analyzing
+      if (currentTab.isAnalyzing) {
+        console.log(`Analysis timeout for ${url}`);
+        currentTab.isAnalyzing = false;
+        currentTab.startTime = Date.now();
+        currentTab.lastUpdateTime = Date.now();
+        currentTab.isProductive = false;
+        currentTab.score = 0;
+        currentTab.explanation = "Analysis timed out";
+        
+        // Remove this domain from analyzing list
+        if (stats.analyzingDomains[currentTab.domain]) {
+          delete stats.analyzingDomains[currentTab.domain];
+        }
+        
+        // Save current tab data
+        chrome.storage.local.set({ currentTab, stats });
+      }
+    }, CONFIG.ANALYSIS_TIMEOUT);
     
-    if (!title || title.trim() === '' || title === 'New Tab') {
-      currentTab.isProductive = false;
-      currentTab.score = 0;
-      currentTab.categories = [];
-      currentTab.explanation = 'Empty or new tab';
-      currentTab.lastUpdated = Date.now();
-      currentTab.isAnalyzing = false;
-      currentTab.lastUpdateTime = Date.now();
-      
-      // Remove from analyzing domains
-      delete stats.analyzingDomains[domain];
-      
-      await chrome.storage.local.set({ currentTab, stats });
-      return;
-    }
-
-    // Mark as analyzing
-    currentTab.isAnalyzing = true;
-    stats.analyzingDomains[domain] = true;
-    await chrome.storage.local.set({ currentTab, stats });
-
-    // Call the backend API
+    // Make request to backend server
     const response = await fetch(`${CONFIG.BACKEND_URL}/api/analyze-title`, {
       method: 'POST',
       headers: {
@@ -327,7 +352,11 @@ async function analyzeTabTitle(title, url) {
       },
       body: JSON.stringify({ title })
     });
-
+    
+    // Clear the timeout since we got a response
+    clearTimeout(analysisTimeout);
+    
+    // Process response
     if (!response.ok) {
       throw new Error(`Backend server error: ${response.status}`);
     }
@@ -360,11 +389,13 @@ async function analyzeTabTitle(title, url) {
     currentTab.categories = analysis.categories;
     currentTab.explanation = analysis.explanation;
     currentTab.isAnalyzing = false;
-    currentTab.lastUpdateTime = Date.now();
-    currentTab.lastUpdated = Date.now();
+    currentTab.startTime = Date.now();
+    currentTab.lastUpdateTime = Date.now(); // Set this to start tracking time immediately
     
-    // Remove from analyzing domains
-    delete stats.analyzingDomains[domain];
+    // Remove this domain from analyzing list
+    if (stats.analyzingDomains[currentTab.domain]) {
+      delete stats.analyzingDomains[currentTab.domain];
+    }
     
     // Cache the analysis result
     urlCache[url] = {
@@ -376,7 +407,7 @@ async function analyzeTabTitle(title, url) {
     };
     
     // Save the updated cache
-    await chrome.storage.local.set({ currentTab, stats, urlCache });
+    await chrome.storage.local.set({ currentTab, urlCache, stats });
     return analysis;
   } catch (error) {
     console.error('Error analyzing title:', error);
@@ -544,8 +575,9 @@ function handleMessages(message, sender, sendResponse) {
  * Update time tracking based on visibility and focus
  */
 function updateTimeTracking() {
-  // Only track time if not analyzing, window is active, and tab is visible
-  if (!currentTab.isAnalyzing && isWindowActive && isTabVisible) {
+  // Track time if window is active and tab is visible
+  // Even if analyzing, we'll track as non-productive
+  if (isWindowActive && isTabVisible) {
     const now = Date.now();
     
     // If this is the first update after becoming visible/active
@@ -558,8 +590,8 @@ function updateTimeTracking() {
     // Calculate time since last update
     const timeSinceLastUpdate = now - currentTab.lastUpdateTime;
     
-    // Only count if the time is reasonable (less than 30 seconds)
-    if (timeSinceLastUpdate > 0 && timeSinceLastUpdate < 30000) {
+    // Only count if the time is reasonable (less than configured max gap)
+    if (timeSinceLastUpdate > 0 && timeSinceLastUpdate < CONFIG.MAX_TIME_GAP) {
       // Initialize tracking for this domain if it doesn't exist
       if (!domainTracking[currentTab.domain]) {
         domainTracking[currentTab.domain] = {
@@ -571,7 +603,8 @@ function updateTimeTracking() {
       }
       
       // Update domain-specific tracking based on current productivity state
-      const isReallyProductive = currentTab.score >= CONFIG.PRODUCTIVITY_THRESHOLD;
+      // If still analyzing, count as non-productive
+      const isReallyProductive = !currentTab.isAnalyzing && currentTab.score >= CONFIG.PRODUCTIVITY_THRESHOLD;
       
       if (isReallyProductive) {
         domainTracking[currentTab.domain].productiveTime += timeSinceLastUpdate;
@@ -580,7 +613,7 @@ function updateTimeTracking() {
         console.log(`Added ${Math.round(timeSinceLastUpdate/1000)}s to productive time for ${currentTab.domain}`);
       } else {
         domainTracking[currentTab.domain].nonProductiveTime += timeSinceLastUpdate;
-        domainTracking[currentTab.domain].nonProductiveScore = currentTab.score;
+        domainTracking[currentTab.domain].nonProductiveScore = currentTab.isAnalyzing ? 0 : currentTab.score;
         stats.nonProductiveTime += timeSinceLastUpdate;
         console.log(`Added ${Math.round(timeSinceLastUpdate/1000)}s to non-productive time for ${currentTab.domain}`);
       }
@@ -604,6 +637,9 @@ function updateTimeTracking() {
       
       // Save tracking and stats
       chrome.storage.local.set({ domainTracking, stats });
+    } else if (timeSinceLastUpdate >= CONFIG.MAX_TIME_GAP) {
+      // If the gap is too large, just update the timestamp without counting time
+      console.log(`Time gap too large (${Math.round(timeSinceLastUpdate/1000)}s), resetting timer`);
     }
     
     // Update last update time
