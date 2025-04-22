@@ -29,7 +29,7 @@ const PORT = process.env.PORT || 3000;
 
 // Gemini API configuration
 const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
-const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
+const model = genAI.getGenerativeModel({ model: "text-bison-lite" });
 
 // Middleware
 app.use(cors());
@@ -51,7 +51,7 @@ async function analyzeTabTitle(title) {
   try {
     // Create prompt for Gemini
     const prompt = `
-      Analyze this browser tab title: "${title}"
+      Analyze this browser tab title: "${title}" and the URL: "${url}"
       
       Determine if this title suggests productive content. Consider these factors:
       1. Educational content (math, science, history, programming, etc.)
