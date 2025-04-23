@@ -53,6 +53,101 @@ let isWindowActive = false;
 let isTabVisible = false;
 let lastActiveTime = null;
 
+// --- SQL.js integration and daily reset for time tracking ---
+import { loadSqlJs } from './sql.js';
+
+// DB instance
+let sqlDb = null;
+
+// Initialize or load the SQLite DB from IndexedDB
+async function initSqlDb() {
+  const SQL = await loadSqlJs();
+  let dbData = await new Promise(resolve => {
+    const req = indexedDB.open('battletask-sqlite', 1);
+    req.onupgradeneeded = event => {
+      const db = event.target.result;
+      db.createObjectStore('sqlite', { keyPath: 'id' });
+    };
+    req.onsuccess = event => {
+      const db = event.target.result;
+      const tx = db.transaction('sqlite', 'readonly');
+      const store = tx.objectStore('sqlite');
+      const getReq = store.get('main');
+      getReq.onsuccess = () => resolve(getReq.result ? getReq.result.data : null);
+      getReq.onerror = () => resolve(null);
+    };
+    req.onerror = () => resolve(null);
+  });
+  sqlDb = new SQL.Database(dbData ? new Uint8Array(dbData) : undefined);
+  // Create table if not exists
+  sqlDb.run(`CREATE TABLE IF NOT EXISTS daily_stats (
+    date TEXT PRIMARY KEY,
+    productiveTime INTEGER,
+    nonProductiveTime INTEGER
+  )`);
+}
+
+// Save SQLite DB to IndexedDB
+async function persistSqlDb() {
+  const dbData = sqlDb.export();
+  await new Promise(resolve => {
+    const req = indexedDB.open('battletask-sqlite', 1);
+    req.onsuccess = event => {
+      const db = event.target.result;
+      const tx = db.transaction('sqlite', 'readwrite');
+      const store = tx.objectStore('sqlite');
+      store.put({ id: 'main', data: dbData });
+      tx.oncomplete = resolve;
+    };
+    req.onerror = resolve;
+  });
+}
+
+// Store today's stats in DB and reset counters
+async function storeAndResetDailyStats() {
+  if (!sqlDb) await initSqlDb();
+  const today = new Date().toISOString().slice(0, 10);
+  sqlDb.run('INSERT OR REPLACE INTO daily_stats (date, productiveTime, nonProductiveTime) VALUES (?, ?, ?)', [
+    today,
+    stats.productiveTime,
+    stats.nonProductiveTime
+  ]);
+  await persistSqlDb();
+  // Reset stats
+  stats.productiveTime = 0;
+  stats.nonProductiveTime = 0;
+  stats.lastReset = Date.now();
+  chrome.storage.local.set({ stats });
+}
+
+// Set up daily reset timer
+function scheduleDailyReset() {
+  const now = new Date();
+  const nextMidnight = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);
+  const msUntilMidnight = nextMidnight - now;
+  setTimeout(() => {
+    storeAndResetDailyStats().then(scheduleDailyReset);
+  }, msUntilMidnight + 1000); // +1s buffer
+}
+
+// --- Startup catch-up: ensure daily reset always happens ---
+async function catchUpDailyReset() {
+  const today = new Date().toISOString().slice(0, 10);
+  const lastResetDay = stats.lastReset
+    ? new Date(stats.lastReset).toISOString().slice(0, 10)
+    : null;
+  if (lastResetDay !== today) {
+    await storeAndResetDailyStats();
+  }
+}
+
+// Call at extension startup
+initSqlDb().then(async () => {
+  await catchUpDailyReset();
+  scheduleDailyReset();
+});
+// --- END SQL.js integration ---
+
 // Initialize the extension
 async function init() {
   console.log('BattleTask background initializing...');
@@ -172,12 +267,8 @@ async function handleTabActivated(activeInfo) {
     // Get tab details
     const tab = await chrome.tabs.get(activeInfo.tabId);
     
-    // Skip chrome:// urls, extension pages, and new tabs
-    if (!tab.url || 
-        tab.url.startsWith('chrome://') || 
-        tab.url.startsWith('chrome-extension://') ||
-        (tab.url === 'about:blank' || tab.title === 'New Tab' || tab.url.startsWith('chrome://newtab'))) {
-      console.log('Ignoring new tab or internal browser page');
+    // Skip chrome:// urls and extension pages
+    if (!tab.url || tab.url.startsWith('chrome://') || tab.url.startsWith('chrome-extension://')) {
       return;
     }
     
@@ -254,12 +345,8 @@ function applyUrlCache(url) {
 function handleTabUpdated(tabId, changeInfo, tab) {
   // Only proceed if the URL has changed
   if (changeInfo.url) {
-    // Skip chrome:// urls, extension pages, and new tabs
-    if (!tab.url || 
-        tab.url.startsWith('chrome://') || 
-        tab.url.startsWith('chrome-extension://') ||
-        (tab.url === 'about:blank' || tab.title === 'New Tab' || tab.url.startsWith('chrome://newtab'))) {
-      console.log('Ignoring new tab or internal browser page');
+    // Skip chrome:// urls and extension pages
+    if (!tab.url || tab.url.startsWith('chrome://') || tab.url.startsWith('chrome-extension://')) {
       return;
     }
     
