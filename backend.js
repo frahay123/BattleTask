@@ -59,7 +59,7 @@ async function analyzeTabTitle(title) {
       3. Work-related tools and platforms (project management, coding, documentation)
       4. Research or academic topics, like cloud hosted storage
       5. Productivity tools and resources
-      6. Email is always productive
+      6. Email domains are productive.
       
       Return a JSON object with these fields:
       - isProductive (boolean): true if it's likely productive content
