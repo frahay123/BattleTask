@@ -51,7 +51,7 @@ async function analyzeTabTitle(title) {
   try {
     // Create prompt for Gemini
     const prompt = `
-      Analyze this browser tab title: "${title}"  "${url}"
+      Analyze this browser tab title: "${title}" 
       
       Determine if this title suggests productive content. Consider these factors:
       1. Educational content (math, science, history, programming, etc.)
