@@ -57,9 +57,9 @@ async function analyzeTabTitle(title) {
       1. Educational content (math, science, history, programming, etc.)
       2. Professional development (job search, career resources, skill building)
       3. Work-related tools and platforms (project management, coding, documentation)
-      4. Research or academic topics, like cloud hosted storage
+      4. Research or academic topics
       5. Productivity tools and resources
-      6. Email domains are productive.
+      6. Email is always productive
       
       Return a JSON object with these fields:
       - isProductive (boolean): true if it's likely productive content
