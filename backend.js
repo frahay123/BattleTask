@@ -51,23 +51,22 @@ async function analyzeTabTitle(title) {
   try {
     // Create prompt for Gemini
     const prompt = `
-      Analyze this browser tab title: "${title}" 
-      
-      Determine if this title suggests productive content. Consider these factors:
-      1. Educational content (math, science, history, programming, etc.)
-      2. Professional development (job search, career resources, skill building)
-      3. Work-related tools and platforms (project management, coding, documentation)
-      4. Research or academic topics, like cloud hosted storage
-      5. Productivity tools and resources
-      6. Email is always productive
-      
-      Return a JSON object with these fields:
-      - isProductive (boolean): true if it's likely productive content
-      - score (integer between 0 and 100): how confident the content is productive
-      - categories (array of strings): productivity categories that match, if any
-      - explanation (string): brief explanation of why it's productive or not
-      
-      Just return the JSON object, nothing else.
+      Given this browser tab title: "${title}", decide if it indicates productive content.
+
+      Criteria for productivity:
+      1. Educational (math, science, history, programming, etc.)
+      2. Professional development (jobs, careers, skills)
+      3. Work tools/platforms (project management, coding, docs)
+      4. Research/academic topics (e.g. cloud-hosted storage)
+      5. Productivity tools/resources and emails are productive
+
+      Return a JSON with:
+      - isProductive (boolean)
+      - score (0–100): confidence level
+      - categories (string array): matched criteria
+      - explanation (string): brief reason for decision
+
+      Only return the JSON.
     `;
 
     // Make request to Gemini API
