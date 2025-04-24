@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>BattleTask - Site Blocked</title>
+  <style>
+    :root {
+      --bg-color: #1a1a1a;
+      --text-color: #f0f0f0;
+      --card-bg: #2a2a2a;
+      --border-color: #3a3a3a;
+      --productive-color: #4caf50;
+      --non-productive-color: #f44336;
+      --neutral-color: #9e9e9e;
+      --highlight-color: #2196f3;
+      --shadow-color: rgba(0, 0, 0, 0.3);
+    }
+
+    body {
+      width: 100%;
+      height: 100vh;
+      margin: 0;
+      padding: 0;
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+      background-color: var(--bg-color);
+      color: var(--text-color);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      text-align: center;
+    }
+
+    .container {
+      max-width: 600px;
+      padding: 2rem;
+      background-color: var(--card-bg);
+      border-radius: 8px;
+      box-shadow: 0 4px 8px var(--shadow-color);
+    }
+
+    h1 {
+      color: var(--non-productive-color);
+      margin-bottom: 1rem;
+    }
+
+    p {
+      margin-bottom: 1.5rem;
+      font-size: 1.1rem;
+      line-height: 1.5;
+    }
+
+    .url-display {
+      background-color: rgba(0, 0, 0, 0.2);
+      padding: 0.5rem 1rem;
+      border-radius: 4px;
+      word-break: break-all;
+      margin-bottom: 1rem;
+      font-family: monospace;
+    }
+
+    .logo {
+      font-size: 2rem;
+      font-weight: bold;
+      margin-bottom: 2rem;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="logo">BattleTask</div>
+    <h1>Site Blocked</h1>
+    <p>This specific URL has been identified as unproductive and has been blocked by BattleTask's Productive Mode.</p>
+    <p>If you want to visit this exact content again, you must disable productive mode.</p>
+    
+    <div class="url-display" id="blockedUrlDisplay"></div>
+  </div>
+
+  <script src="blocked.js"></script>
+</body>
+</html>

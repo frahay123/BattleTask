@@ -44,20 +44,20 @@ function safeSendMessage(message, callback) {
         if (chrome.runtime.lastError) {
           // Silently handle context invalidation or other errors
           console.warn('Extension context invalidated or message failed:', chrome.runtime.lastError.message);
-          if (callback) callback(undefined);
-        } else if (callback) {
+          if (callback && typeof callback === 'function') callback(undefined);
+        } else if (callback && typeof callback === 'function') {
           callback(response);
         }
       });
     } else {
       // Context is invalid, do not throw
       console.warn('Extension context invalidated, cannot send message');
-      if (callback) callback(undefined);
+      if (callback && typeof callback === 'function') callback(undefined);
     }
   } catch (error) {
     // Silently handle all errors
     console.warn('Error sending message to background script:', error);
-    if (callback) callback(undefined);
+    if (callback && typeof callback === 'function') callback(undefined);
   }
 }
 

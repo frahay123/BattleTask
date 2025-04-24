@@ -23,9 +23,20 @@ document.addEventListener('DOMContentLoaded', function() {
   const clearCacheButton = document.getElementById('clear-cache');
   const cacheInfo = document.getElementById('cache-info');
   const themeToggleBtn = document.getElementById('theme-toggle-btn');
+  const productiveModeToggle = document.getElementById('productive-mode-toggle');
   const tabs = document.querySelectorAll('.tab');
   const tabContents = document.querySelectorAll('.tab-content');
   const currentSiteCard = document.getElementById('current-site-card');
+  const overrideSection = document.getElementById('manual-override-section');
+  const overrideUrlSpan = document.getElementById('override-url');
+  const markProductiveBtn = document.getElementById('mark-productive-btn');
+  const markNonProductiveBtn = document.getElementById('mark-nonproductive-btn');
+  const removeOverrideBtn = document.getElementById('remove-override-btn');
+  const overrideStatusDiv = document.getElementById('override-status');
+  const blockDomainInput = document.getElementById('block-domain-input');
+  const addBlockDomainBtn = document.getElementById('add-block-domain-btn');
+  const blockedDomainsList = document.getElementById('blocked-domains-list');
+  let currentUrl = '';
 
   // Initialize UI
   initializeUI();
@@ -36,6 +47,9 @@ document.addEventListener('DOMContentLoaded', function() {
   function initializeUI() {
     // Load theme preference
     loadThemePreference();
+    
+    // Load productive mode state
+    loadProductiveModeState();
     
     // Set up event listeners
     setupEventListeners();
@@ -48,6 +62,9 @@ document.addEventListener('DOMContentLoaded', function() {
     
     // Set up tab switching
     setupTabs();
+    
+    // Load user blocked domains
+    loadBlockedDomains();
   }
 
   /**
@@ -87,6 +104,93 @@ document.addEventListener('DOMContentLoaded', function() {
         theme: !isDark ? 'dark' : 'light' 
       });
     });
+    
+    // Productive Mode toggle
+    productiveModeToggle.addEventListener('change', function() {
+      const isEnabled = this.checked;
+      
+      // Update productive mode state in storage
+      chrome.storage.local.get(['productiveMode'], function(data) {
+        const productiveMode = data.productiveMode || { enabled: false, unproductiveStartTime: null };
+        productiveMode.enabled = isEnabled;
+        productiveMode.unproductiveStartTime = null; // Reset timer when toggling
+        
+        chrome.storage.local.set({ productiveMode }, function() {
+          console.log(`Productive mode ${isEnabled ? 'enabled' : 'disabled'}`);
+          
+          // Notify background script to update icon and start monitoring
+          chrome.runtime.sendMessage({ 
+            action: 'setProductiveMode', 
+            enabled: isEnabled 
+          });
+        });
+      });
+    });
+    
+    markProductiveBtn.onclick = () => {
+      chrome.storage.local.get(['overrides'], (data) => {
+        const overrides = data.overrides || {};
+        overrides[currentUrl] = true;
+        chrome.storage.local.set({ overrides }, () => {
+          showOverrideUI({ url: currentUrl });
+          // Notify background script to update the icon
+          chrome.runtime.sendMessage({ 
+            action: 'manualOverrideChanged', 
+            url: currentUrl,
+            isProductive: true
+          });
+        });
+      });
+    };
+    markNonProductiveBtn.onclick = () => {
+      chrome.storage.local.get(['overrides'], (data) => {
+        const overrides = data.overrides || {};
+        overrides[currentUrl] = false;
+        chrome.storage.local.set({ overrides }, () => {
+          showOverrideUI({ url: currentUrl });
+          // Notify background script to update the icon
+          chrome.runtime.sendMessage({ 
+            action: 'manualOverrideChanged', 
+            url: currentUrl,
+            isProductive: false
+          });
+        });
+      });
+    };
+    removeOverrideBtn.onclick = () => {
+      chrome.storage.local.get(['overrides'], (data) => {
+        const overrides = data.overrides || {};
+        delete overrides[currentUrl];
+        chrome.storage.local.set({ overrides }, () => {
+          showOverrideUI({ url: currentUrl });
+          // Notify background script to update the icon
+          chrome.runtime.sendMessage({ 
+            action: 'manualOverrideChanged', 
+            url: currentUrl,
+            isProductive: null
+          });
+        });
+      });
+    };
+    
+    addBlockDomainBtn.onclick = () => {
+      const val = blockDomainInput.value.trim().toLowerCase();
+      if (!val) return;
+      chrome.storage.local.get(['userBlockedDomains'], (data) => {
+        let userBlockedDomains = data.userBlockedDomains || [];
+        if (!userBlockedDomains.includes(val)) {
+          userBlockedDomains.push(val);
+          chrome.storage.local.set({ userBlockedDomains }, () => {
+            blockDomainInput.value = '';
+            renderBlockedDomains(userBlockedDomains);
+            // Notify background to update enforcement
+            chrome.runtime.sendMessage({ action: 'userBlockedDomainsChanged', domains: userBlockedDomains });
+          });
+        } else {
+          blockDomainInput.value = '';
+        }
+      });
+    };
   }
 
   /**
@@ -173,6 +277,8 @@ document.addEventListener('DOMContentLoaded', function() {
     
     // Set explanation
     statusReason.textContent = tabData.explanation || 'No explanation available';
+    
+    showOverrideUI(tabData);
   }
 
   /**
@@ -229,7 +335,6 @@ document.addEventListener('DOMContentLoaded', function() {
     // Check if there are domains to display
     if (!domains || domains.length === 0) {
       const emptyItem = document.createElement('li');
-      emptyItem.className = 'empty-list';
       emptyItem.textContent = isProductive ? 
         'No productive sites visited yet' : 
         'No non-productive sites visited yet';
@@ -328,6 +433,115 @@ document.addEventListener('DOMContentLoaded', function() {
       document.body.classList.remove('dark-theme');
       document.body.classList.add('light-theme');
     }
+  }
+
+  /**
+   * Show manual override UI
+   */
+  function showOverrideUI(tabData) {
+    currentUrl = tabData.url;
+    overrideUrlSpan.textContent = currentUrl;
+    chrome.storage.local.get(['overrides'], (data) => {
+      const overrides = data.overrides || {};
+      
+      // Reset button styles
+      markProductiveBtn.style.transform = 'scale(1)';
+      markProductiveBtn.style.boxShadow = 'none';
+      markNonProductiveBtn.style.transform = 'scale(1)';
+      markNonProductiveBtn.style.boxShadow = 'none';
+      
+      // Reset indicators
+      document.getElementById('productive-indicator').style.display = 'none';
+      document.getElementById('nonproductive-indicator').style.display = 'none';
+      
+      if (overrides[currentUrl] === true) {
+        overrideStatusDiv.textContent = 'This URL is marked as Productive';
+        overrideStatusDiv.style.color = 'var(--productive-color)';
+        removeOverrideBtn.style.display = '';
+        // Show indicator for productive button
+        document.getElementById('productive-indicator').style.display = 'block';
+        // Enhance selected button appearance
+        markProductiveBtn.style.transform = 'scale(1.05)';
+        markProductiveBtn.style.boxShadow = '0 0 8px var(--productive-color)';
+      } else if (overrides[currentUrl] === false) {
+        overrideStatusDiv.textContent = 'This URL is marked as Non-Productive';
+        overrideStatusDiv.style.color = 'var(--non-productive-color)';
+        removeOverrideBtn.style.display = '';
+        // Show indicator for non-productive button
+        document.getElementById('nonproductive-indicator').style.display = 'block';
+        // Enhance selected button appearance
+        markNonProductiveBtn.style.transform = 'scale(1.05)';
+        markNonProductiveBtn.style.boxShadow = '0 0 8px var(--non-productive-color)';
+      } else {
+        overrideStatusDiv.textContent = 'No manual override set for this URL.';
+        overrideStatusDiv.style.color = 'var(--highlight-color)';
+        removeOverrideBtn.style.display = 'none';
+      }
+    });
+  }
+
+  /**
+   * Load productive mode state
+   */
+  function loadProductiveModeState() {
+    chrome.storage.local.get(['productiveMode'], function(data) {
+      if (data.productiveMode && data.productiveMode.enabled) {
+        productiveModeToggle.checked = true;
+      }
+    });
+  }
+
+  /**
+   * Render blocked domains list
+   */
+  function renderBlockedDomains(domains) {
+    blockedDomainsList.innerHTML = '';
+    if (!domains || domains.length === 0) {
+      const li = document.createElement('li');
+      li.textContent = 'No domains blocked.';
+      li.style.color = 'var(--neutral-color)';
+      blockedDomainsList.appendChild(li);
+      return;
+    }
+    domains.forEach(domain => {
+      const li = document.createElement('li');
+      li.style.display = 'flex';
+      li.style.alignItems = 'center';
+      li.style.justifyContent = 'space-between';
+      li.style.padding = '2px 0';
+      li.innerHTML = `<span>${domain}</span>`;
+      const removeBtn = document.createElement('button');
+      removeBtn.textContent = 'Remove';
+      removeBtn.style.background = 'var(--neutral-color)';
+      removeBtn.style.color = 'white';
+      removeBtn.style.border = 'none';
+      removeBtn.style.borderRadius = '3px';
+      removeBtn.style.padding = '2px 8px';
+      removeBtn.style.fontSize = '0.92rem';
+      removeBtn.style.cursor = 'pointer';
+      removeBtn.onclick = () => {
+        chrome.storage.local.get(['userBlockedDomains'], (data) => {
+          let userBlockedDomains = data.userBlockedDomains || [];
+          userBlockedDomains = userBlockedDomains.filter(d => d !== domain);
+          chrome.storage.local.set({ userBlockedDomains }, () => {
+            renderBlockedDomains(userBlockedDomains);
+            // Notify background to update enforcement
+            chrome.runtime.sendMessage({ action: 'userBlockedDomainsChanged', domains: userBlockedDomains });
+          });
+        });
+      };
+      li.appendChild(removeBtn);
+      blockedDomainsList.appendChild(li);
+    });
+  }
+
+  /**
+   * Load blocked domains from storage
+   */
+  function loadBlockedDomains() {
+    chrome.storage.local.get(['userBlockedDomains'], (data) => {
+      renderBlockedDomains(data.userBlockedDomains || []);
+    });
   }
 
   // Refresh data periodically

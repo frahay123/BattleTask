@@ -11,7 +11,8 @@
     "alarms",
     "idle",
     "webNavigation",
-    "activeTab"
+    "activeTab",
+    "scripting"
   ],
   "host_permissions": [
     "http://localhost:3000/*",
@@ -23,7 +24,8 @@
     "extension_pages": "script-src 'self'; object-src 'self'"
   },
   "action": {
-    "default_popup": "popup.html"
+    "default_popup": "popup.html",
+    "default_icon": "icons/prod.png"
   },
   "background": {
     "service_worker": "background.js"

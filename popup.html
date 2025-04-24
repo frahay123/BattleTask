@@ -582,6 +582,77 @@
       background-color: #FF9800;
       color: white;
     }
+
+    .productive-mode-toggle {
+      display: flex;
+      align-items: center;
+      margin-bottom: 8px;
+    }
+
+    .productive-mode-label {
+      font-weight: 500;
+      margin-right: 8px;
+    }
+
+    .switch {
+      position: relative;
+      display: inline-block;
+      width: 40px;
+      height: 20px;
+    }
+
+    .switch input {
+      opacity: 0;
+      width: 0;
+      height: 0;
+    }
+
+    .slider {
+      position: absolute;
+      cursor: pointer;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background-color: #ccc;
+      transition: 0.4s;
+    }
+
+    .slider:before {
+      position: absolute;
+      content: "";
+      height: 16px;
+      width: 16px;
+      left: 2px;
+      bottom: 2px;
+      background-color: white;
+      transition: 0.4s;
+    }
+
+    input:checked + .slider {
+      background-color: var(--productive-color);
+    }
+
+    input:focus + .slider {
+      box-shadow: 0 0 1px var(--productive-color);
+    }
+
+    input:checked + .slider:before {
+      transform: translateX(20px);
+    }
+
+    .slider.round {
+      border-radius: 34px;
+    }
+
+    .slider.round:before {
+      border-radius: 50%;
+    }
+
+    .productive-mode-description {
+      font-size: 0.9rem;
+      color: var(--neutral-color);
+    }
   </style>
 </head>
 <body class="dark-theme">
@@ -589,12 +660,24 @@
     <header>
       <h1>BattleTask</h1>
       <div class="theme-toggle">
-        <button class="theme-toggle-btn" id="theme-toggle-btn">
+        <button id="theme-toggle-btn" class="theme-toggle-btn">
           <span class="theme-icon moon-icon">🌙</span>
           <span class="theme-icon sun-icon">☀️</span>
         </button>
       </div>
     </header>
+
+    <!-- Productive Mode Toggle -->
+    <div class="card" id="productive-mode-card">
+      <div class="productive-mode-toggle">
+        <span class="productive-mode-label">Productive Mode</span>
+        <label class="switch">
+          <input type="checkbox" id="productive-mode-toggle">
+          <span class="slider round"></span>
+        </label>
+      </div>
+      <p class="productive-mode-description">When enabled, unproductive sites will be blocked after 30 seconds.</p>
+    </div>
 
     <div class="card" id="current-site-card">
       <div class="current-site">
@@ -644,6 +727,34 @@
         <ul class="domain-list" id="non-productive-domain-list">
           <li class="empty-list">No non-productive sites visited yet</li>
         </ul>
+      </div>
+    </div>
+
+    <div id="manual-override-section" class="card" style="margin-top:18px; padding:14px 12px 10px 12px; background:var(--card-bg); box-shadow: 0 2px 8px var(--shadow-color);">
+      <h3 style="margin-bottom:8px; font-size:1.08rem; font-weight:500; color:var(--highlight-color);">Manual Productivity Override</h3>
+      <div style="display:flex; flex-direction:column; gap:8px; align-items:flex-start;">
+        <div style="display:flex; gap:8px; margin-bottom:2px;">
+          <button id="mark-productive-btn" style="background:var(--productive-color);color:white; border:none; border-radius:3px; padding:4px 12px; font-size:0.94rem; cursor:pointer; position:relative; transition: all 0.2s ease;">
+            Productive
+            <span id="productive-indicator" style="position:absolute; top:-5px; right:-5px; width:12px; height:12px; background-color:white; border:2px solid var(--productive-color); border-radius:50%; display:none; box-shadow: 0 0 5px rgba(0,0,0,0.3);"></span>
+          </button>
+          <button id="mark-nonproductive-btn" style="background:var(--non-productive-color);color:white; border:none; border-radius:3px; padding:4px 12px; font-size:0.94rem; cursor:pointer; position:relative; transition: all 0.2s ease;">
+            Non-Productive
+            <span id="nonproductive-indicator" style="position:absolute; top:-5px; right:-5px; width:12px; height:12px; background-color:white; border:2px solid var(--non-productive-color); border-radius:50%; display:none; box-shadow: 0 0 5px rgba(0,0,0,0.3);"></span>
+          </button>
+          <button id="remove-override-btn" style="background:var(--neutral-color);color:white; border:none; border-radius:3px; padding:4px 12px; font-size:0.94rem; cursor:pointer; display:none; transition: all 0.2s ease;">Remove</button>
+        </div>
+        <div id="override-status" style="font-size:0.93rem; margin-top:2px; color:var(--highlight-color);"></div>
+        <!-- Domain Blocking Section -->
+        <div id="domain-block-section" style="margin-top:14px; width:100%;">
+          <label for="block-domain-input" style="font-size:0.98rem; font-weight:500; color:var(--non-productive-color);">Block Domains (during Productive Mode):</label>
+          <div style="display:flex; gap:6px; margin-top:6px;">
+            <input type="text" id="block-domain-input" placeholder="e.g. facebook.com" style="flex:1; padding:4px 8px; border-radius:3px; border:1px solid var(--border-color); font-size:0.97rem;">
+            <button id="add-block-domain-btn" style="background:var(--non-productive-color);color:white; border:none; border-radius:3px; padding:4px 10px; font-size:0.97rem; cursor:pointer;">Add</button>
+          </div>
+          <ul id="blocked-domains-list" style="margin:8px 0 0 0; padding:0; list-style:none;"></ul>
+        </div>
+        <!-- End Domain Blocking Section -->
       </div>
     </div>
 

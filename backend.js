@@ -57,7 +57,6 @@ async function analyzeTabTitle(title) {
       - isProductive (bool)
       - score (0–100)
       - categories (word)
-      - explanation (word)
 
       Productive if:
       1. Education (STEM, history, etc.)
@@ -104,7 +103,8 @@ async function analyzeTabTitle(title) {
     }
     
     if (!analysis.categories) analysis.categories = [];
-    if (!analysis.explanation) analysis.explanation = '';
+    // Remove explanation field
+    if (analysis.explanation) delete analysis.explanation;
 
     return analysis;
   } catch (error) {
@@ -112,8 +112,7 @@ async function analyzeTabTitle(title) {
     return {
       isProductive: false,
       score: 0,
-      categories: [],
-      explanation: 'Error during analysis'
+      categories: []
     };
   }
 }
@@ -148,8 +147,7 @@ app.post('/api/tabs', async (req, res) => {
       analysis: {
         isProductive: analysis.isProductive,
         score: analysis.score,
-        categories: analysis.categories,
-        explanation: analysis.explanation
+        categories: analysis.categories
       }
     });
   } catch (error) {
@@ -171,7 +169,9 @@ app.post('/api/analyze-title', async (req, res) => {
     
     res.json({
       success: true,
-      ...analysis
+      isProductive: analysis.isProductive,
+      score: analysis.score,
+      categories: analysis.categories
     });
   } catch (error) {
     console.error('Error analyzing title:', error);
