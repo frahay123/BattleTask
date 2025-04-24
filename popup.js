@@ -71,11 +71,7 @@ document.addEventListener('DOMContentLoaded', function() {
    * Set up event listeners for interactive elements
    */
   function setupEventListeners() {
-    // Toggle details button
-    toggleDetails.addEventListener('click', function() {
-      statusReason.classList.toggle('expanded');
-      toggleDetails.textContent = statusReason.classList.contains('expanded') ? 'Hide Details' : 'Show Details';
-    });
+    
     
     // Reset stats button
     resetStatsButton.addEventListener('click', function() {

@@ -22,6 +22,8 @@ const express = require('express');
 const cors = require('cors');
 const bodyParser = require('body-parser');
 const { GoogleGenerativeAI } = require('@google/generative-ai');
+const rateLimit = require('express-rate-limit');
+const validator = require('validator');
 
 // Initialize Express app
 const app = express();
@@ -34,6 +36,28 @@ const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
 // Middleware
 app.use(cors());
 app.use(bodyParser.json());
+
+// Rate limiting: 300 requests per IP per day
+const ipLimiter = rateLimit({
+  windowMs: 24 * 60 * 60 * 1000, // 24 hours
+  max: 300,
+  message: { success: false, error: 'Too many requests from this IP, try again tomorrow.' }
+});
+app.use('/api/', ipLimiter);
+
+// Per-user rate limiting (based on user ID, if provided)
+const userLimiter = rateLimit({
+  windowMs: 24 * 60 * 60 * 1000,
+  max: 300,
+  keyGenerator: (req) => {
+    // Use tab.id, or a userId field, or fallback to IP
+    if (req.body && req.body.tab && req.body.tab.id) return 'user-' + req.body.tab.id;
+    if (req.body && req.body.userId) return 'user-' + req.body.userId;
+    return req.ip;
+  },
+  message: { success: false, error: 'Too many requests for this user, try again tomorrow.' }
+});
+app.use('/api/', userLimiter);
 
 /**
  * Analyze a tab title to determine if it's productive content
@@ -57,7 +81,7 @@ async function analyzeTabTitle(title) {
       - isProductive (bool)
       - score (0–100)
       - categories (word)
-      - explanation (word)
+  
 
       Productive if:
       1. Education (STEM, history, etc.)
@@ -135,12 +159,18 @@ app.post('/api/tabs', async (req, res) => {
   try {
     const { windowId, tab } = req.body;
 
-    if (!tab || !tab.title) {
+    if (!tab || !tab.title || !tab.id || !tab.url) {
       return res.status(400).json({ success: false, error: 'Tab data is required' });
     }
+    // Validate URL
+    if (!validator.isURL(tab.url, { require_protocol: true })) {
+      return res.status(400).json({ success: false, error: 'Invalid URL' });
+    }
+    // Sanitize title
+    const cleanTitle = validator.escape(tab.title);
 
     // Analyze the tab title for productive content
-    const analysis = await analyzeTabTitle(tab.title);
+    const analysis = await analyzeTabTitle(cleanTitle);
     
     res.json({ 
       success: true, 
@@ -154,7 +184,7 @@ app.post('/api/tabs', async (req, res) => {
     });
   } catch (error) {
     console.error('Error processing tab data:', error);
-    res.status(500).json({ success: false, error: error.message });
+    res.status(500).json({ success: false, error: 'Internal server error. Please try again later.' });
   }
 });
 
@@ -166,8 +196,10 @@ app.post('/api/analyze-title', async (req, res) => {
     if (!title) {
       return res.status(400).json({ success: false, error: 'Title is required' });
     }
+    // Sanitize title
+    const cleanTitle = validator.escape(title);
     
-    const analysis = await analyzeTabTitle(title);
+    const analysis = await analyzeTabTitle(cleanTitle);
     
     res.json({
       success: true,
@@ -175,7 +207,7 @@ app.post('/api/analyze-title', async (req, res) => {
     });
   } catch (error) {
     console.error('Error analyzing title:', error);
-    res.status(500).json({ success: false, error: error.message });
+    res.status(500).json({ success: false, error: 'Internal server error. Please try again later.' });
   }
 });
 

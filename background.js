@@ -497,9 +497,9 @@ async function analyzeTabTitle(title, url, force=false) {
     // If domain is in user-blocked domains, mark as non-productive
     // Otherwise, mark as productive (fallback to user preferences instead of API)
     if (userBlockedDomains && userBlockedDomains.includes(domain)) {
-      updateTabWithAnalysis({ isProductive: false, score: 0, categories: ['User Blocked'] });
+      updateTabWithAnalysis({ isProductive: false, score: 0, categories: ['User Blocked'], explanation: 'Domain is in user-blocked list. API limit reached.' });
     } else {
-      updateTabWithAnalysis({ isProductive: true, score: CONFIG.PRODUCTIVITY_THRESHOLD, categories: ['API Limit'] });
+      updateTabWithAnalysis({ isProductive: true, score: CONFIG.PRODUCTIVITY_THRESHOLD, categories: ['API Limit'], explanation: 'API limit reached. Defaulting to productive since domain is not blocked by user.' });
     }
     return;
   }
@@ -569,19 +569,19 @@ async function analyzeTabTitle(title, url, force=false) {
     const isProductive = analysis.score >= CONFIG.PRODUCTIVITY_THRESHOLD;
     
     // Cache the result
-    urlCache[url] = { isProductive, score: analysis.score, categories: analysis.categories, timestamp: Date.now() };
+    urlCache[url] = { isProductive, score: analysis.score, categories: analysis.categories, explanation: analysis.explanation, timestamp: Date.now() };
     
     // Save cache
     chrome.storage.local.set({ urlCache });
     
     // Update tab data
-    updateTabWithAnalysis({ isProductive, score: analysis.score, categories: analysis.categories });
+    updateTabWithAnalysis({ isProductive, score: analysis.score, categories: analysis.categories, explanation: analysis.explanation });
     
   } catch (error) {
     console.error('Error analyzing title:', error);
     
     // Set default values for error
-    updateTabWithAnalysis({ isProductive: false, score: 0, categories: [] });
+    updateTabWithAnalysis({ isProductive: false, score: 0, categories: [], explanation: `Error analyzing content: ${error.message}` });
   }
 }
 
