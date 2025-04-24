@@ -29,7 +29,7 @@ const PORT = process.env.PORT || 3000;
 
 // Gemini API configuration
 const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
-const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
+const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
 
 // Middleware
 app.use(cors());
@@ -56,8 +56,8 @@ async function analyzeTabTitle(title) {
       Return JSON:
       - isProductive (bool)
       - score (0–100)
-      - categories (array)
-      - explanation (string)
+      - categories (word)
+      - explanation (word)
 
       Productive if:
       1. Education (STEM, history, etc.)
