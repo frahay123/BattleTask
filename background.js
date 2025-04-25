@@ -972,9 +972,23 @@ function handleMessages(message, sender, sendResponse) {
         if (message.url) {
           // Update the icon based on the override
           if (message.isProductive === true) {
-            chrome.action.setIcon({ path: 'icons/green.png' });
+            chrome.action.setIcon({
+            path: {
+              16: 'icons/green16.png',
+              32: 'icons/green32.png',
+              48: 'icons/green48.png',
+              128: 'icons/green128.png',
+            }
+          });
           } else if (message.isProductive === false) {
-            chrome.action.setIcon({ path: 'icons/red.png' });
+            chrome.action.setIcon({
+              path: {
+                16: 'icons/red16.png',
+                32: 'icons/red32.png',
+                48: 'icons/red48.png',
+                128: 'icons/red128.png',
+              }
+            });
           } else {
             // Override removed, revert to default icon based on current tab
             updateExtensionIcon(currentTab);
@@ -1334,7 +1348,15 @@ function updateExtensionIcon(tab) {
       }
       
       // Set the icon
-      chrome.action.setIcon({ path: iconPath });
+      // Set the icon for all required sizes
+      chrome.action.setIcon({
+        path: {
+          16: iconPath.replace('.png', '16.png'),
+          32: iconPath.replace('.png', '32.png'),
+          48: iconPath.replace('.png', '48.png'),
+          128: iconPath.replace('.png', '128.png'),
+        }
+      });
       
       // Set badge text and color
       chrome.action.setBadgeText({ text: badgeText });
