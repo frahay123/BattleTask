@@ -88,7 +88,7 @@ async function analyzeTabTitle(title) {
       2. Careers, jobs, skills
       3. Work tools (coding, docs, PM)
       4. Academic/research topics
-      5. Productivity tools
+      5. Productivity tools, cloud storage 
       6. Email → always productive
     `;
 
