@@ -457,6 +457,36 @@ function applyUrlCache(url) {
  * Analyze tab title using backend server
  */
 async function analyzeTabTitle(title, url, force=false) {
+  // Check if URL is in cache
+  if (urlCache && urlCache[url]) {
+    // Use cached result
+    updateTabWithAnalysis(urlCache[url]);
+    return;
+  }
+
+  // Check if user spent at least 5 seconds on the tab
+  let timeSpent = 0;
+  if (domainTracking && domainTracking[currentTab.domain]) {
+    timeSpent = domainTracking[currentTab.domain].timeSpent || 0;
+  }
+  if (timeSpent < 5000 && !force) {
+    // Less than 5 seconds: set orange icon and skip Gemini API call
+    chrome.action.setIcon({
+      path: {
+        16: 'icons/orange16.png',
+        32: 'icons/orange32.png',
+        48: 'icons/orange48.png',
+        128: 'icons/orange128.png',
+      }
+    });
+    updateTabWithAnalysis({
+      isProductive: false,
+      score: 0,
+      categories: [],
+      explanation: 'Spend at least 5 seconds on the tab for analysis.'
+    });
+    return;
+  }
   // Skip if no title or URL
   if (!title || !url) {
     console.log('Skipping analysis: No title or URL');
