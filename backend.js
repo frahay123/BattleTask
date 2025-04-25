@@ -31,7 +31,7 @@ const PORT = process.env.PORT || 3000;
 
 // Gemini API configuration
 const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
-const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
 
 // Middleware
 app.use(cors());
@@ -84,12 +84,12 @@ async function analyzeTabTitle(title) {
   
 
       Productive if:
-      1. Education (STEM, history, etc.)
-      2. Careers, jobs, skills
-      3. Work tools (coding, docs, PM)
-      4. Academic/research topics
-      5. Productivity tools, cloud storage, AI
-      6. Email → always productive
+      1. Educational content (math, science, history, programming, etc.)
+      2. Professional development (job search, career resources, skill building)
+      3. Work-related tools and platforms (project management, coding, documentation, AI)
+      4. Research or academic topics
+      5. Productivity tools and resources
+      6. Email is always productive
     `;
 
     // Make request to Gemini API
