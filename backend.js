@@ -29,10 +29,6 @@ const validator = require('validator');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// Configure Express to trust the X-Forwarded-For header
-// This is required for express-rate-limit to work correctly when behind a proxy
-app.set('trust proxy', true);
-
 // Gemini API configuration
 const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
 const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });

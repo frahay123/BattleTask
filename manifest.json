@@ -27,11 +27,7 @@
     "16": "icons/prod16.png",
     "32": "icons/prod32.png",
     "48": "icons/prod48.png",
-    "128": "icons/prod128.png",
-    "orange16": "icons/orange16.png",
-    "orange32": "icons/orange32.png",
-    "orange48": "icons/orange48.png",
-    "orange128": "icons/orange128.png"
+    "128": "icons/prod128.png"
   },
   "action": {
     "default_popup": "popup.html",
