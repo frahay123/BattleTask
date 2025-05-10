@@ -66,140 +66,506 @@ const CONFIG = {
   ],
   // Add always non-productive domains
   ALWAYS_NON_PRODUCTIVE_DOMAINS: [
-    'facebook.', 'twitter.', 'instagram.', 'tiktok.', 'pinterest.',
-    'reddit.', 'tumblr.', 'snapchat.', 'whatsapp.',
-    'youtube.', 'netflix.', 'hulu.', 'twitch.', 'vimeo.',
-    'disneyplus.', 'primevideo.', 'hbomax.',
-    'steam.', 'epicgames.', 'playstation.', 'xbox.', 'nintendo.',
-    'roblox.', 'ea.com', 'blizzard.', 'ubisoft.', 'rockstargames.',
-    'ign.', 'gamespot.', 'kotaku.', 'polygon.',
-    'amazon.', 'ebay.', 'walmart.', 'target.', 'bestbuy.',
-    'etsy.', 'wish.', 'aliexpress.', 'shein.', 'wayfair.',
-    'cnn.', 'foxnews.', 'bbc.', 'nytimes.', 'washingtonpost.',
-    'theguardian.', 'huffpost.', 'buzzfeed.', 'vice.'
+    // Entertainment and Social Media
+    'tiktok.com',
+    'instagram.com',
+    'facebook.com',
+    'twitter.com',
+    'x.com',
+    'reddit.com',
+    'netflix.com',
+    'hulu.com',
+    'disneyplus.com',
+    'twitch.tv',
+    'youtube.com',
+    'vimeo.com',
+    'dailymotion.com',
+    'snapchat.com',
+    'pinterest.com',
+    'tumblr.com',
+    
+    // Gaming
+    'steam.com',
+    'steampowered.com',
+    'epicgames.com',
+    'blizzard.com',
+    'battle.net',
+    'playstation.com',
+    'xbox.com',
+    'nintendo.com',
+    'roblox.com',
+    'ign.com',
+    'gamespot.com',
+    'polygon.com',
+    'kotaku.com',
+    'gamefaqs.com',
+    'miniclip.com',
+    'y8.com',
+    'poki.com',
+    'kongregate.com',
+    'itch.io',
+    'friv.com',
+    'kizi.com',
+    
+    // E-commerce
+    'amazon.com',
+    'ebay.com',
+    'walmart.com',
+    'target.com',
+    'bestbuy.com',
+    'etsy.com',
+    'wish.com',
+    'aliexpress.com',
+    'shein.com',
+    'newegg.com',
+    'wayfair.com',
+    'shopify.com',
+    'overstock.com',
+    'homedepot.com',
+    'lowes.com',
+    'zappos.com',
+    
+    // Sports and Betting
+    'espn.com',
+    'bleacherreport.com',
+    'draftkings.com',
+    'fanduel.com',
+    'bet365.com',
+    'bovada.com',
+    'sportsbook.com',
+    'bettingsites.com',
+    'sportsbetting.com'
   ]
+};
+
+// Storage lock to prevent race conditions
+let storageOperationInProgress = false;
+let storageQueue = [];
+let cacheWriteTimer = null;
+let lastCacheWrite = Date.now();
+
+// Utilities for storage operations with lock
+const StorageUtil = {
+  // Set storage with locking mechanism
+  set: async function(data) {
+    return new Promise((resolve, reject) => {
+      // Add operation to queue
+      storageQueue.push({
+        operation: 'set',
+        data: data,
+        resolve: resolve,
+        reject: reject
+      });
+      
+      // Process queue if not already in progress
+      if (!storageOperationInProgress) {
+        this._processQueue();
+      }
+    });
+  },
+  
+  // Get storage with locking mechanism
+  get: async function(keys) {
+    return new Promise((resolve, reject) => {
+      // Add operation to queue
+      storageQueue.push({
+        operation: 'get',
+        keys: keys,
+        resolve: resolve,
+        reject: reject
+      });
+      
+      // Process queue if not already in progress
+      if (!storageOperationInProgress) {
+        this._processQueue();
+      }
+    });
+  },
+  
+  // Process storage operation queue
+  _processQueue: async function() {
+    if (storageQueue.length === 0) {
+      storageOperationInProgress = false;
+      return;
+    }
+    
+    storageOperationInProgress = true;
+    const item = storageQueue.shift();
+    
+    try {
+      if (item.operation === 'set') {
+        await this._setWithRetry(item.data);
+        item.resolve();
+      } else if (item.operation === 'get') {
+        const result = await this._getWithRetry(item.keys);
+        item.resolve(result);
+      }
+    } catch (error) {
+      console.error(`Storage operation (${item.operation}) failed after multiple retries:`, error, {
+        platform: navigator.platform,
+        timestamp: new Date().toISOString()
+      });
+      item.reject(error);
+    }
+    
+    // Process next item in queue
+    this._processQueue();
+  },
+  
+  // Set with retry mechanism
+  _setWithRetry: async function(data, attempt = 0) {
+    const maxAttempts = CONFIG.STORAGE_RETRY_ATTEMPTS;
+    
+    try {
+      await chrome.storage.local.set(data);
+      console.debug(`Storage write success on attempt ${attempt + 1}`, {
+        platform: navigator.platform,
+        keys: Object.keys(data),
+        timestamp: new Date().toISOString()
+      });
+      return true;
+    } catch (error) {
+      console.warn(`Storage write attempt ${attempt + 1} failed:`, error, {
+        platform: navigator.platform,
+        keys: Object.keys(data)
+      });
+      
+      if (attempt < maxAttempts - 1) {
+        // Exponential backoff with jitter
+        const delay = CONFIG.STORAGE_RETRY_DELAY * Math.pow(2, attempt) * (0.8 + Math.random() * 0.4);
+        await new Promise(resolve => setTimeout(resolve, delay));
+        return this._setWithRetry(data, attempt + 1);
+      } else {
+        throw error;
+      }
+    }
+  },
+  
+  // Get with retry mechanism
+  _getWithRetry: async function(keys, attempt = 0) {
+    const maxAttempts = CONFIG.STORAGE_RETRY_ATTEMPTS;
+    
+    try {
+      const result = await chrome.storage.local.get(keys);
+      console.debug(`Storage read success on attempt ${attempt + 1}`, {
+        platform: navigator.platform,
+        keys: keys,
+        timestamp: new Date().toISOString()
+      });
+      return result;
+    } catch (error) {
+      console.warn(`Storage read attempt ${attempt + 1} failed:`, error, {
+        platform: navigator.platform,
+        keys: keys
+      });
+      
+      if (attempt < maxAttempts - 1) {
+        // Exponential backoff with jitter
+        const delay = CONFIG.STORAGE_RETRY_DELAY * Math.pow(2, attempt) * (0.8 + Math.random() * 0.4);
+        await new Promise(resolve => setTimeout(resolve, delay));
+        return this._getWithRetry(keys, attempt + 1);
+      } else {
+        throw error;
+      }
+    }
+  }
 };
 
 // Cache Manager with Hash Map implementation
 const CacheManager = {
   // Hash map for faster lookups
   urlHashMap: new Map(),
+  isInitialized: false,
+  initPromise: null,
   
   // Initialize cache
   init: async function() {
-    try {
-      const data = await chrome.storage.local.get(['urlCache']);
-      urlCache = data.urlCache || {};
-      
-      // Initialize hash map from cache
-      Object.entries(urlCache).forEach(([url, data]) => {
-        this.urlHashMap.set(url, data);
+    if (this.isInitialized) return;
+    
+    // If init is already in progress, return the promise
+    if (this.initPromise) return this.initPromise;
+    
+    this.initPromise = new Promise(async (resolve, reject) => {
+      try {
+        console.log(`Initializing cache (platform: ${navigator.platform})`);
+        
+        const data = await StorageUtil.get(['urlCache']);
+    urlCache = data.urlCache || {};
+        
+        // Clear the hash map before populating
+        this.urlHashMap.clear();
+        
+        // Initialize hash map from cache
+        let entryCount = 0;
+        for (const [url, data] of Object.entries(urlCache)) {
+          this.urlHashMap.set(url, data);
+          entryCount++;
+        }
+        
+        console.log(`Cache initialized with ${entryCount} entries (platform: ${navigator.platform})`);
+        this.isInitialized = true;
+    
+    // Set up periodic cache cleanup
+        this._setupCleanupInterval();
+        
+        resolve();
+      } catch (error) {
+        console.error('Error initializing cache:', error, {
+          platform: navigator.platform,
+          timestamp: new Date().toISOString()
+        });
+        // Set default values on error
+        urlCache = {};
+        this.urlHashMap.clear();
+        this.isInitialized = true; // Mark as initialized even with empty cache to avoid repeated failures
+        reject(error);
+      } finally {
+        this.initPromise = null;
+      }
+    });
+    
+    return this.initPromise;
+  },
+  
+  // Set up cleanup interval
+  _setupCleanupInterval: function() {
+    // Clear any existing interval
+    if (this._cleanupInterval) {
+      clearInterval(this._cleanupInterval);
+    }
+    
+    // Create new interval
+    this._cleanupInterval = setInterval(() => {
+      console.log(`Running scheduled cache cleanup (platform: ${navigator.platform})`);
+      this.cleanCache().catch(err => {
+        console.error('Error in scheduled cache cleanup:', err, {
+          platform: navigator.platform,
+          timestamp: new Date().toISOString()
+        });
       });
-      
-      console.log('Cache initialized with', this.urlHashMap.size, 'entries');
-      
-      // Set up periodic cache cleanup
-      setInterval(() => this.cleanCache(), 30 * 60 * 1000); // Clean every 30 minutes
-    } catch (error) {
-      console.error('Error initializing cache:', error);
-      urlCache = {};
-      this.urlHashMap.clear();
+    }, CONFIG.CACHE_CLEANUP_INTERVAL);
+    
+    // Make sure interval doesn't prevent shutdown
+    if (this._cleanupInterval.unref) {
+      this._cleanupInterval.unref();
     }
   },
   
   // Add to cache
   addToCache: async function(url, data) {
-    if (!url) return;
+    if (!url) {
+      console.warn('Attempted to cache with empty URL', {
+        platform: navigator.platform,
+        timestamp: new Date().toISOString()
+      });
+      return;
+    }
+    
+    // Normalize URL to avoid case sensitivity issues
+    const normalizedUrl = this._normalizeUrl(url);
     
     try {
+      await this.init(); // Ensure cache is initialized
+      
       const cacheEntry = {
-        ...data,
-        timestamp: Date.now(),
+      ...data,
+      timestamp: Date.now(),
         platform: navigator.platform
       };
       
       // Update both cache and hash map
-      urlCache[url] = cacheEntry;
-      this.urlHashMap.set(url, cacheEntry);
+      urlCache[normalizedUrl] = cacheEntry;
+      this.urlHashMap.set(normalizedUrl, cacheEntry);
       
-      // Persist cache with retry mechanism
-      await this.saveCacheWithRetry();
-      console.log(`Added to cache: ${url}`);
+      // Debounce cache writes to avoid excessive writes
+      this._debouncedSaveCache();
+      
+      console.log(`Added to cache: ${normalizedUrl} (platform: ${navigator.platform})`);
     } catch (error) {
-      console.error('Error adding to cache:', error);
+      console.error('Error adding to cache:', error, {
+        url: normalizedUrl,
+        platform: navigator.platform,
+        timestamp: new Date().toISOString()
+      });
     }
+  },
+  
+  // Debounced save cache function
+  _debouncedSaveCache: function() {
+    // Clear existing timer
+    if (cacheWriteTimer) {
+      clearTimeout(cacheWriteTimer);
+    }
+    
+    // Don't wait too long between saves
+    const timeSinceLastWrite = Date.now() - lastCacheWrite;
+    const delay = Math.min(
+      CONFIG.CACHE_WRITE_DEBOUNCE, 
+      Math.max(100, CONFIG.CACHE_WRITE_DEBOUNCE - timeSinceLastWrite)
+    );
+    
+    // Set new timer
+    cacheWriteTimer = setTimeout(() => {
+      this.saveCacheWithRetry().catch(err => {
+        console.error('Error in debounced cache save:', err, {
+          platform: navigator.platform,
+          timestamp: new Date().toISOString()
+        });
+      });
+      lastCacheWrite = Date.now();
+    }, delay);
   },
   
   // Get from cache using hash map for O(1) lookup
   getFromCache: function(url) {
     if (!url) return null;
     
-    // Check if URL is in always productive domains
-    const domain = extractDomain(url);
-    if (CONFIG.ALWAYS_PRODUCTIVE_DOMAINS.some(prodDomain => domain.includes(prodDomain))) {
-      return {
-        isProductive: true,
-        score: 100,
-        categories: ['Work Tool'],
-        explanation: 'Automatically marked as productive (work tool)',
-        timestamp: Date.now()
-      };
-    }
-    
-    // Use hash map for O(1) lookup
-    const cachedData = this.urlHashMap.get(url);
-    if (!cachedData) return null;
-    
-    const now = Date.now();
-    
-    // Check if cache is expired
-    if (now - cachedData.timestamp > CONFIG.CACHE_EXPIRY) {
-      this.urlHashMap.delete(url);
-      delete urlCache[url];
-      this.saveCacheWithRetry(); // Fire and forget
+    try {
+      if (!this.isInitialized) {
+        console.log("Cache not yet initialized when attempting lookup. Will initialize now.");
+        // We'll try to initialize synchronously in this context
+        // but won't wait for completion before checking the cache
+        this.init().catch(err => {
+          console.error('Error initializing cache during lookup:', err);
+        });
+      }
+      
+      // Normalize URL to avoid case sensitivity issues
+      const normalizedUrl = this._normalizeUrl(url);
+      
+      // Check if URL is in always productive domains
+      const domain = extractDomain(normalizedUrl);
+      
+      // Check for always productive domains
+      if (CONFIG.ALWAYS_PRODUCTIVE_DOMAINS.some(prodDomain => domain.includes(prodDomain))) {
+        return {
+          isProductive: true,
+          score: 100,
+          categories: ['Work Tool'],
+          explanation: 'Automatically marked as productive (work tool)',
+          timestamp: Date.now()
+        };
+      }
+      
+      // Check for always non-productive domains
+      if (CONFIG.ALWAYS_NON_PRODUCTIVE_DOMAINS.some(nonProdDomain => domain.includes(nonProdDomain))) {
+        return {
+          isProductive: false,
+          score: 0,
+          categories: ['Entertainment', 'Shopping', 'Gaming'],
+          explanation: 'Automatically marked as non-productive',
+          timestamp: Date.now()
+        };
+      }
+      
+      // Use hash map for O(1) lookup
+      const cachedData = this.urlHashMap.get(normalizedUrl);
+      if (!cachedData) return null;
+      
+      const now = Date.now();
+      
+      // Check if cache is expired
+      if (now - cachedData.timestamp > CONFIG.CACHE_EXPIRY) {
+        this.urlHashMap.delete(normalizedUrl);
+        delete urlCache[normalizedUrl];
+        this._debouncedSaveCache(); // Fire and forget
+        return null;
+      }
+      
+      console.log(`Cache hit for ${normalizedUrl} (platform: ${navigator.platform})`);
+      return cachedData;
+    } catch (error) {
+      console.error('Error getting from cache:', error, {
+        url: url,
+        platform: navigator.platform,
+        timestamp: new Date().toISOString()
+      });
       return null;
     }
-    
-    console.log(`Cache hit for ${url}`);
-    return cachedData;
+  },
+  
+  // Normalize URL to avoid case sensitivity issues
+  _normalizeUrl: function(url) {
+    try {
+      // Extract the parts of the URL that we want to normalize
+      const urlObj = new URL(url);
+      
+      // Convert hostname to lowercase
+      const normalizedHostname = urlObj.hostname.toLowerCase();
+      
+      // Keep path, query and hash as-is for now
+      // We could normalize path if needed
+      
+      // Reassemble the URL
+      urlObj.hostname = normalizedHostname;
+      return urlObj.toString();
+    } catch (e) {
+      // If URL parsing fails, just use the original
+      console.warn(`URL normalization failed for ${url}:`, e);
+      return url;
+    }
   },
   
   // Save cache to storage with retry mechanism
-  saveCacheWithRetry: async function(retries = 3) {
-    for (let i = 0; i < retries; i++) {
-      try {
-        await chrome.storage.local.set({ urlCache });
-        return true;
-      } catch (error) {
-        console.error(`Cache save attempt ${i + 1} failed:`, error);
-        if (i === retries - 1) throw error;
-        await new Promise(resolve => setTimeout(resolve, 100 * (i + 1))); // Exponential backoff
-      }
+  saveCacheWithRetry: async function(retries = CONFIG.STORAGE_RETRY_ATTEMPTS) {
+    try {
+      await StorageUtil.set({ urlCache });
+      return true;
+    } catch (error) {
+      console.error('Final cache save failure after retries:', error, {
+        platform: navigator.platform,
+        timestamp: new Date().toISOString(),
+        cacheSize: Object.keys(urlCache).length
+      });
+      return false;
     }
-    return false;
   },
   
   // Clean expired cache entries
   cleanCache: async function() {
     try {
-      const now = Date.now();
-      let cleanCount = 0;
+      await this.init(); // Ensure cache is initialized
+      
+    const now = Date.now();
+    let cleanCount = 0;
+    
+      // Track metrics
+      const cacheSize = this.urlHashMap.size;
       
       // Clean both cache and hash map
+      const expiredUrls = [];
+      
       for (const [url, data] of this.urlHashMap.entries()) {
         if (now - data.timestamp > CONFIG.CACHE_EXPIRY) {
           this.urlHashMap.delete(url);
-          delete urlCache[url];
-          cleanCount++;
-        }
+          expiredUrls.push(url);
+        cleanCount++;
+      }
       }
       
-      if (cleanCount > 0) {
-        console.log(`Cleaned ${cleanCount} expired cache entries`);
+      // Remove from urlCache
+      for (const url of expiredUrls) {
+        delete urlCache[url];
+      }
+    
+    if (cleanCount > 0) {
+        console.log(`Cleaned ${cleanCount} expired cache entries (${((cleanCount/cacheSize)*100).toFixed(1)}% of cache)`, {
+          platform: navigator.platform,
+          timestamp: new Date().toISOString(),
+          newCacheSize: this.urlHashMap.size
+        });
         await this.saveCacheWithRetry();
+      } else {
+        console.log('Cache cleanup completed - no expired entries found', {
+          platform: navigator.platform,
+          timestamp: new Date().toISOString()
+        });
       }
     } catch (error) {
-      console.error('Error cleaning cache:', error);
+      console.error('Error cleaning cache:', error, {
+        platform: navigator.platform,
+        timestamp: new Date().toISOString()
+      });
     }
   }
 };
@@ -246,8 +612,7 @@ let productiveMode = {
   unproductiveStartTime: null,
   activeTabTime: 0, // Legacy (single timer)
   lastActiveTimestamp: null,
-  urlTimers: {}, // Map of url -> accumulated activeTabTime
-  offlineMode: false
+  urlTimers: {} // Map of url -> accumulated activeTabTime
 };
 
 // Blocked URLs
@@ -280,7 +645,7 @@ async function init() {
   console.log('BattleTask background initializing...', platformInfo);
   
   try {
-    // Load saved stats and cache
+  // Load saved stats and cache
     const data = await StorageUtil.get([
       'stats', 
       'domainTracking', 
@@ -294,77 +659,76 @@ async function init() {
       'settings'
     ]);
     
-    if (data.stats) stats = data.stats;
-    if (data.domainTracking) domainTracking = data.domainTracking;
-    if (data.urlCache) urlCache = data.urlCache;
-    if (data.productiveMode) {
-      productiveMode = data.productiveMode;
-      // Initialize offline mode if it doesn't exist
-      if (productiveMode.offlineMode === undefined) {
-        productiveMode.offlineMode = false;
-      }
-    }
-    if (data.blockedUrls) blockedUrls = data.blockedUrls;
-    if (data.userBlockedDomains) userBlockedDomains = data.userBlockedDomains;
-    if (typeof data.apiCallCount === 'number') apiCallCount = data.apiCallCount;
-    if (typeof data.apiCallDate === 'string') apiCallDate = data.apiCallDate;
-    if (typeof data.statsResetDate === 'string') statsResetDate = data.statsResetDate;
+  if (data.stats) stats = data.stats;
+  if (data.domainTracking) domainTracking = data.domainTracking;
+  if (data.urlCache) urlCache = data.urlCache;
+  if (data.productiveMode) productiveMode = data.productiveMode;
+  if (data.blockedUrls) blockedUrls = data.blockedUrls;
+  if (data.userBlockedDomains) userBlockedDomains = data.userBlockedDomains;
+  if (typeof data.apiCallCount === 'number') apiCallCount = data.apiCallCount;
+  if (typeof data.apiCallDate === 'string') apiCallDate = data.apiCallDate;
+  if (typeof data.statsResetDate === 'string') statsResetDate = data.statsResetDate;
     
     // Initialize settings if not present
     if (!data.settings) {
       await StorageUtil.set({
         settings: {
           theme: 'light', // Default theme
-          transparentIcons: true, // Default to transparent icons
-          localCategorization: true // Enable local categorization by default
+          transparentIcons: true // Default to transparent icons
         }
       });
-    } else if (data.settings.localCategorization === undefined) {
-      // Update settings to include localCategorization if it doesn't exist
-      data.settings.localCategorization = true;
-      await StorageUtil.set({ settings: data.settings });
     }
-    
-    // Initialize the Cache Manager
-    await CacheManager.init();
-    
-    // Daily stats reset on startup
-    await maybeResetStatsDaily();
-    
-    // Set up event listeners
-    chrome.tabs.onActivated.addListener(handleTabActivated);
-    chrome.tabs.onUpdated.addListener(handleTabUpdated);
-    chrome.runtime.onMessage.addListener(handleMessages);
-    
-    // Listen for changes to userBlockedDomains from popup
-    chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-      if (message.action === 'userBlockedDomainsChanged') {
-        userBlockedDomains = message.domains || [];
-        StorageUtil.set({ userBlockedDomains });
-      }
-    });
-    
-    // Set up message listeners
-    chrome.runtime.onMessage.addListener(handleMessages);
-    
-    // Set up visibility change listeners
-    setupVisibilityTracking();
-    
-    // Start periodic updates for time tracking
-    setInterval(async () => { await updateTimeTracking(); }, CONFIG.UPDATE_INTERVAL);
-    
-    // Get the current active tab
-    const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
-    if (tabs.length > 0) {
-      await handleTabActivated({ tabId: tabs[0].id });
+  
+  // Initialize the Cache Manager
+  await CacheManager.init();
+  
+  // Daily stats reset on startup
+  await maybeResetStatsDaily();
+  
+  // Set up event listeners
+  chrome.tabs.onActivated.addListener(handleTabActivated);
+  chrome.tabs.onUpdated.addListener(handleTabUpdated);
+  chrome.runtime.onMessage.addListener(handleMessages);
+  
+  // Listen for changes to userBlockedDomains from popup
+  chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+    if (message.action === 'userBlockedDomainsChanged') {
+      userBlockedDomains = message.domains || [];
+        StorageUtil.set({ userBlockedDomains }).catch(error => {
+          console.error('Error saving userBlockedDomains:', error);
+        });
     }
+      return true; // Keep the message channel open for async response
+  });
+  
+  // Set up visibility change listeners
+  setupVisibilityTracking();
+  
+  // Start periodic updates for time tracking
+    setInterval(() => { 
+      updateTimeTracking().catch(error => {
+        console.error('Error in updateTimeTracking:', error);
+      });
+    }, CONFIG.UPDATE_INTERVAL);
+  
+  // Get the current active tab
+  const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
+  if (tabs.length > 0) {
+    await handleTabActivated({ tabId: tabs[0].id });
+  }
+  
+  // Set up content script for SPA monitoring
+    await setupSPAContentScripts();
     
-    // Set up content script for SPA monitoring
-    setupSPAContentScripts();
+    // Apply theme-appropriate styles for the extension
+    await applyThemeStyles();
     
-    console.log('BattleTask background initialized');
+    console.log('BattleTask background initialized successfully');
   } catch (error) {
-    console.error('Error initializing extension:', error);
+    console.error('Error during extension initialization:', error, {
+      platform: navigator.platform,
+      timestamp: new Date().toISOString()
+    });
   }
 }
 
@@ -421,25 +785,6 @@ async function checkTabVisibility() {
 }
 
 /**
- * Clean expired cache entries
- */
-function cleanExpiredCache() {
-  const now = Date.now();
-  let cacheChanged = false;
-  
-  Object.keys(urlCache).forEach(url => {
-    if (now - urlCache[url].timestamp > CONFIG.CACHE_EXPIRY) {
-      delete urlCache[url];
-      cacheChanged = true;
-    }
-  });
-  
-  if (cacheChanged) {
-    chrome.storage.local.set({ urlCache });
-  }
-}
-
-/**
  * Handle tab activation (user switches tabs)
  */
 async function handleTabActivated(activeInfo) {
@@ -469,7 +814,7 @@ async function handleTabActivated(activeInfo) {
       productiveMode.activeTabTime = 0;
       productiveMode.lastActiveTimestamp = null;
       productiveMode.unproductiveStartTime = null;
-      StorageUtil.set({ productiveMode });
+      chrome.storage.local.set({ productiveMode });
     }
     // ---
     if (!tab.url || tab.url.startsWith('chrome://') || tab.url.startsWith('chrome-extension://')) { return; }
@@ -492,6 +837,7 @@ async function handleTabActivated(activeInfo) {
     // Check if URL is in cache before setting analysis state
     const cachedData = CacheManager.getFromCache(tab.url);
     
+    // Always create a new currentTab object to avoid any state carryover issues
     currentTab = {
       id: tab.id,
       url: tab.url,
@@ -504,7 +850,8 @@ async function handleTabActivated(activeInfo) {
       categories: cachedData ? cachedData.categories : [],
       explanation: cachedData ? cachedData.explanation : 'Analyzing...',
       lastUpdated: now,
-      isAnalyzing: !cachedData // Only set to analyzing if not in cache
+      isAnalyzing: !cachedData, // Only set to analyzing if not in cache
+      iconState: !cachedData ? 'orange' : null // Set iconState to orange for new tabs
     };
     
     // If we found cached data, reset the analysis timer
@@ -516,15 +863,23 @@ async function handleTabActivated(activeInfo) {
       };
     }
     
-    StorageUtil.set({ currentTab });
-    // --- Resume timer for this non-productive tab ---
-    if (productiveMode.enabled && !currentTab.isProductive && !blockedUrls[tab.url]) {
-      productiveMode.unproductiveStartTime = Date.now();
-      // Resume from stored time if exists
+    chrome.storage.local.set({ currentTab });
+    
+    // --- Reset productive mode timers for the new tab ---
+    if (productiveMode.enabled) {
+      // For non-productive tabs, initialize the timer
+      if (!cachedData || !cachedData.isProductive) {
       if (!productiveMode.urlTimers) productiveMode.urlTimers = {};
       productiveMode.activeTabTime = productiveMode.urlTimers[tab.url] || 0;
-      productiveMode.lastActiveTimestamp = Date.now();
-      StorageUtil.set({ productiveMode });
+        productiveMode.lastActiveTimestamp = !cachedData ? null : now; // Only start timer if analysis is already done
+        productiveMode.unproductiveStartTime = !cachedData ? null : now;
+      } else {
+        // Reset timers for productive tabs
+        productiveMode.activeTabTime = 0;
+        productiveMode.lastActiveTimestamp = null;
+        productiveMode.unproductiveStartTime = null;
+      }
+      chrome.storage.local.set({ productiveMode });
     }
     // ---
     
@@ -533,13 +888,13 @@ async function handleTabActivated(activeInfo) {
       updateTabWithAnalysis(cachedData);
     } else {
       // Otherwise show the orange "analyzing" icon
-      updateTabWithAnalysis({
-        isProductive: false,
-        score: 0,
-        categories: [],
-        explanation: 'Spend at least 5 seconds on the tab for analysis.',
-        iconState: 'orange'
-      });
+    updateTabWithAnalysis({
+      isProductive: false,
+      score: 0,
+      categories: [],
+      explanation: 'Spend at least 5 seconds on the tab for analysis.',
+      iconState: 'orange'
+    });
     }
     
     updateExtensionIcon(currentTab);
@@ -549,255 +904,127 @@ async function handleTabActivated(activeInfo) {
 }
 
 /**
- * Handle tab updates, fired when tab is loaded or url changed
+ * Handle tab updates (URL changes within a tab)
  */
 async function handleTabUpdated(tabId, changeInfo, tab) {
   try {
-    // Only process completed tab updates with a URL
-    if (changeInfo.status !== 'complete' || !tab.url || tab.url === 'chrome://newtab/') {
+    // Only process if this is the active tab and the URL changed
+    if (!changeInfo.url || !tab.active) {
       return;
     }
     
-    // Only process the active tab in the current window
-    const activeTabs = await chrome.tabs.query({active: true, currentWindow: true});
-    if (activeTabs.length === 0 || activeTabs[0].id !== tabId) {
-      return;
-    }
+    console.log(`Tab updated: ${changeInfo.url} on platform: ${navigator.platform}`);
     
-    console.log('Tab updated:', tab.url);
+    // Start analysis timer when URL changes
+    const now = Date.now();
+    analysisTimer = {
+      startTime: now,
+      url: changeInfo.url,
+      accumulatedTime: 0
+    };
     
-    // Clear any previous analysis timeout
-    if (currentTab && currentTab.analysisTimer) {
-      clearTimeout(currentTab.analysisTimer);
-    }
-    
-    // Check if URL has changed from the current tab
-    if (currentTab && currentTab.url && currentTab.url !== tab.url) {
-      // Reset analyzing state
-      currentTab.isAnalyzing = false;
+    // Check if this URL is already blocked in productive mode
+    if (productiveMode.enabled && blockedUrls[changeInfo.url]) {
+      console.log(`Preventing navigation to blocked URL: ${changeInfo.url}`);
       
-      // Update URL and reset the timer
-      if (productiveMode.enabled) {
-        // Save time for the previous URL
-        if (currentTab.url && currentTab.isProductive !== null) {
-          // In productive mode, we track time for URLs
-          const elapsedTime = updateUrlTimer(currentTab.url, currentTab.isProductive);
-          
-          // Update domain tracking
-          if (elapsedTime > 0) {
-            const domain = extractDomain(currentTab.url);
-            updateDomainTracking(domain, currentTab.isProductive, elapsedTime);
-          }
-        }
-        
-        // Reset timer for new URL
-        productiveMode.lastActiveTimestamp = Date.now();
-        productiveMode.urlTimers[tab.url] = productiveMode.urlTimers[tab.url] || 0;
-        // Save the update to productiveMode in storage
-        await StorageUtil.set({ productiveMode });
+      // Create a redirect URL with the blocked URL as a parameter
+      const redirectUrl = `blocked.html?url=${encodeURIComponent(changeInfo.url)}`;
+      
+      // Redirect to the blocked page
+      chrome.tabs.update(tabId, { url: redirectUrl });
+      return;
+    }
+    
+    // Check if we have this URL in cache
+    const cachedData = CacheManager.getFromCache(changeInfo.url);
+    
+    // If we found cached data, reset the analysis timer
+    if (cachedData) {
+      console.log(`Using cached data for tab update: ${changeInfo.url}`);
+      analysisTimer = {
+        startTime: null,
+        url: null,
+        accumulatedTime: 0
+      };
+    }
+    
+    // --- User-blocked domains enforcement ---
+    if (productiveMode.enabled) {
+      const domain = extractDomain(tab.url);
+      if (userBlockedDomains && userBlockedDomains.includes(domain)) {
+        const redirectUrl = `blocked.html?url=${encodeURIComponent(tab.url)}`;
+        chrome.tabs.update(tab.id, { url: redirectUrl });
+        return;
       }
     }
+    // ---
+    // Skip chrome:// URLs and other special URLs
+    if (!tab.url || tab.url.startsWith('chrome://') || tab.url.startsWith('chrome-extension://')) {
+      return;
+    }
     
-    // Get domain for URL for verification against block lists
+    // Extract domain from URL
     const domain = extractDomain(tab.url);
     
-    // Check if this URL is blocked by user domains
-    if (productiveMode.enabled && userBlockedDomains && userBlockedDomains.includes(domain)) {
-      // Redirect to blocked page
-      chrome.tabs.update(tabId, { url: chrome.runtime.getURL('blocked.html') });
-      return;
-    }
-    
-    // Check if this URL is in blocked URLs (exceeded time limit)
-    if (productiveMode.enabled && blockedUrls[tab.url]) {
-      // Redirect to blocked page
-      chrome.tabs.update(tabId, { url: chrome.runtime.getURL('blocked.html') });
-      return;
-    }
-    
-    // Reset current tab
-    if (currentTab.url !== tab.url) {
-      currentTab = {
-        tabId: tabId,
-        url: tab.url,
-        title: tab.title || '',
-        isProductive: null, // Not analyzed yet
-        score: null,
-        categories: [],
-        explanation: '',
-        isAnalyzing: true, // Set analyzing state
-        analysisTimer: null, // Will be set below
-        lastUpdateTime: Date.now(),
-        analysisStartTime: Date.now() // Track when we started analyzing
-      };
-    } else {
-      // Only update title if it has changed
-      if (tab.title && tab.title !== currentTab.title) {
-        currentTab.title = tab.title;
-      }
-      currentTab.lastUpdateTime = Date.now();
-    }
-    
-    // Set the timer to track how long the tab is being analyzed
-    currentTab.analysisTimer = setTimeout(async () => {
-      // After timeout, mark the tab as "analyzing complete"
-      currentTab.isAnalyzing = false;
-      // Store the update
-      await StorageUtil.set({ currentTab });
-    }, 2000); // 2 second timeout for analysis state
-    
-    // Update icon to reflect the current state (analyzing)
-    await updateIcon(tabId, null, true);
+    // Update current tab with a fresh object to avoid state carryover
+    currentTab = {
+      id: tab.id,
+      url: tab.url,
+      domain: domain,
+      title: tab.title || '',
+      startTime: now,
+      lastUpdateTime: null, // Will be set on first update
+      isProductive: cachedData ? cachedData.isProductive : false,
+      score: cachedData ? cachedData.score : 0,
+      categories: cachedData ? cachedData.categories : [],
+      explanation: cachedData ? cachedData.explanation : 'Analyzing...',
+      lastUpdated: now,
+      isAnalyzing: !cachedData, // Only set to analyzing if not in cache
+      iconState: !cachedData ? 'orange' : null // Set iconState to orange for new pages
+    };
     
     // Save current tab
-    await StorageUtil.set({ currentTab });
+    await chrome.storage.local.set({ currentTab });
+    
+    // --- Reset productive mode timers for URL change ---
+    if (productiveMode.enabled) {
+      // For non-productive tabs, initialize the timer
+      if (!cachedData || !cachedData.isProductive) {
+        if (!productiveMode.urlTimers) productiveMode.urlTimers = {};
+        productiveMode.activeTabTime = productiveMode.urlTimers[tab.url] || 0;
+        productiveMode.lastActiveTimestamp = !cachedData ? null : now; // Only start timer if analysis is already done
+        productiveMode.unproductiveStartTime = !cachedData ? null : now;
+      } else {
+        // Reset timers for productive tabs
+        productiveMode.activeTabTime = 0;
+        productiveMode.lastActiveTimestamp = null;
+        productiveMode.unproductiveStartTime = null;
+      }
+      chrome.storage.local.set({ productiveMode });
+    }
+    // ---
     
     // For SPA sites, we need to wait a bit for content to load and extract more data
-    if (CONFIG.SPA_SITES.some(site => tab.url.includes(site))) {
-      console.log('SPA site detected, waiting for content to load...');
-      
-      // Use setTimeout to delay content script injection
-      setTimeout(() => {
-        chrome.scripting.executeScript({
-          target: { tabId: tabId },
-          files: ['content.js']
-        }).catch(error => {
-          console.error('Error injecting content script:', error);
-        });
-      }, CONFIG.CONTENT_LOAD_DELAY);
-    } else {
-      // Start the title analysis with a slight delay to allow the tab to fully load
-      setTimeout(() => {
-        analyzeTabTitle(tab.title, tab.url);
-      }, 500);
-    }
+    const isSPA = CONFIG.SPA_SITES.some(site => domain.includes(site));
     
-    // If we have cached data for this URL, use it temporarily while waiting for fresh analysis
-    try {
-      const cachedData = CacheManager.getFromCache(tab.url);
-      if (cachedData) {
-        // Use cached data temporarily but mark that analysis is still in progress
-        await updateTabWithAnalysis({ 
-          ...cachedData, 
-          isAnalyzing: true,
-          isLocalAnalysis: true // Mark as local analysis since we're using cached data
-        });
-        
-        // Apply a small delay before applying cached data
-        setTimeout(() => {
-          console.log('Applying cached data:', cachedData);
-          // Now apply the cached data but stop the analyzing indicator
-          updateTabWithAnalysis({ 
-            ...cachedData, 
-            isAnalyzing: false,
-            isLocalAnalysis: true
-          });
-        }, 1000);
-      }
-    } catch (error) {
-      console.error('Error retrieving from cache:', error);
+    // Track the full URL with hash for SPAs
+    const urlWithHash = tab.url;
+    
+    // If URL has cached data, apply it immediately
+    if (cachedData) {
+      updateTabWithAnalysis(cachedData);
+    } else {
+      // Otherwise show the orange "analyzing" indicator
+    updateTabWithAnalysis({
+      isProductive: false,
+      score: 0,
+      categories: [],
+      explanation: 'Spend at least 5 seconds on the tab for analysis.',
+      iconState: 'orange'
+    });
     }
   } catch (error) {
     console.error('Error in handleTabUpdated:', error);
-  }
-}
-
-/**
- * Update the timer for a URL and return the elapsed time
- * This function is used to track time spent on productive/non-productive sites
- * All time tracking logic is done locally for reliability
- */
-function updateUrlTimer(url, isProductive) {
-  try {
-    // Skip empty URLs or null productivity values
-    if (!url || isProductive === null) return 0;
-    
-    const now = Date.now();
-    let elapsedTime = 0;
-    
-    // Calculate elapsed time if we have a previous timestamp
-    if (productiveMode.lastActiveTimestamp) {
-      const diff = now - productiveMode.lastActiveTimestamp;
-      
-      // Ignore suspiciously large time gaps (computer sleep, etc)
-      if (diff > 0 && diff < CONFIG.MAX_TIME_GAP) {
-        elapsedTime = diff;
-        
-        // Update the timers for this URL
-        if (!productiveMode.urlTimers[url]) {
-          productiveMode.urlTimers[url] = 0;
-        }
-        productiveMode.urlTimers[url] += elapsedTime;
-        
-        // Update the global productive/non-productive counters
-        if (isProductive) {
-          stats.productiveTime += elapsedTime;
-        } else {
-          stats.nonProductiveTime += elapsedTime;
-        }
-        
-        // Log the update for debugging
-        console.log(`Updated ${isProductive ? 'productive' : 'non-productive'} time for ${url}: +${elapsedTime}ms, total: ${productiveMode.urlTimers[url]}ms`);
-        
-        // Persist the updated stats to storage
-        StorageUtil.set({ stats }).catch(error => {
-          console.error('Error saving stats:', error);
-        });
-      } else if (diff >= CONFIG.MAX_TIME_GAP) {
-        console.log(`Time gap too large (${diff}ms), ignoring`);
-      }
-    }
-    
-    // Update the timestamp for next calculation
-    productiveMode.lastActiveTimestamp = now;
-    
-    // Save the updated productiveMode
-    StorageUtil.set({ productiveMode }).catch(error => {
-      console.error('Error saving productive mode data:', error);
-    });
-    
-    return elapsedTime;
-  } catch (error) {
-    console.error('Error updating URL timer:', error);
-    return 0;
-  }
-}
-
-/**
- * Update domain tracking with time spent
- * This is used for analytics and reporting
- */
-function updateDomainTracking(domain, isProductive, timeSpent) {
-  try {
-    if (!domain || timeSpent <= 0) return;
-    
-    // Initialize domain tracking if needed
-    if (!domainTracking[domain]) {
-      domainTracking[domain] = {
-        productiveTime: 0,
-        nonProductiveTime: 0,
-        lastVisit: Date.now()
-      };
-    }
-    
-    // Update the appropriate counter
-    if (isProductive) {
-      domainTracking[domain].productiveTime += timeSpent;
-    } else {
-      domainTracking[domain].nonProductiveTime += timeSpent;
-    }
-    
-    // Update last visit timestamp
-    domainTracking[domain].lastVisit = Date.now();
-    
-    // Save domain tracking data
-    StorageUtil.set({ domainTracking }).catch(error => {
-      console.error('Error saving domain tracking:', error);
-    });
-    
-    console.log(`Updated domain tracking for ${domain}: ${isProductive ? 'productive' : 'non-productive'} +${timeSpent}ms`);
-  } catch (error) {
-    console.error('Error updating domain tracking:', error);
   }
 }
 
@@ -849,99 +1076,50 @@ async function analyzeTabTitle(title, url, force=false) {
     // Extract domain for always productive/non-productive checks
     const domain = extractDomain(url);
     
-    // Check for always productive domains first - LOCAL check, no API call
+    // Check for always productive domains first
     if (CONFIG.ALWAYS_PRODUCTIVE_DOMAINS.some(prodDomain => domain.includes(prodDomain))) {
       updateTabWithAnalysis({ 
         isProductive: true, 
         score: 100, 
         categories: ['Work Tool'], 
-        explanation: 'Automatically marked as productive (work tool)',
-        isLocalAnalysis: true // Flag to indicate local analysis
+        explanation: 'Automatically marked as productive (work tool)' 
       });
       return;
     }
     
-    // Check for always non-productive domains - LOCAL check, no API call
+    // Check for always non-productive domains
     if (CONFIG.ALWAYS_NON_PRODUCTIVE_DOMAINS.some(nonProdDomain => domain.includes(nonProdDomain))) {
       updateTabWithAnalysis({ 
         isProductive: false, 
         score: 0, 
         categories: ['Entertainment', 'Shopping', 'Gaming'], 
-        explanation: 'Automatically marked as non-productive',
-        isLocalAnalysis: true // Flag to indicate local analysis
+        explanation: 'Automatically marked as non-productive' 
       });
       return;
     }
 
-    // Check for manual override first - LOCAL check, no API call
+    // Check for manual override first
     const overrides = (await StorageUtil.get('overrides')).overrides || {};
     if (overrides[url] === true) {
-      updateTabWithAnalysis({ 
-        isProductive: true, 
-        score: 100, 
-        categories: ['Manual'], 
-        explanation: 'User override: productive',
-        isLocalAnalysis: true // Flag to indicate local analysis
-      });
+      updateTabWithAnalysis({ isProductive: true, score: 100, categories: ['Manual'], explanation: 'User override: productive' });
       return;
     }
     if (overrides[url] === false) {
-      updateTabWithAnalysis({ 
-        isProductive: false, 
-        score: 0, 
-        categories: ['Manual'], 
-        explanation: 'User override: non-productive',
-        isLocalAnalysis: true // Flag to indicate local analysis
-      });
+      updateTabWithAnalysis({ isProductive: false, score: 0, categories: ['Manual'], explanation: 'User override: non-productive' });
       return;
     }
     
-    // Check cache before proceeding with analysis - LOCAL check, no API call
+    // Check cache before proceeding with analysis
     const cachedData = CacheManager.getFromCache(url);
     if (cachedData && !force) {
       console.log('Using cached analysis for:', url);
-      // Add the local analysis flag to cached data
-      updateTabWithAnalysis({
-        ...cachedData,
-        isLocalAnalysis: true
-      });
+      updateTabWithAnalysis(cachedData);
       return;
     }
     
-    // If productive mode is enabled, prioritize local determination over API calls
-    if (productiveMode.enabled) {
-      // Check if there are any local signals to use before making API call
-      
-      // 1. Check user-blocked domains
-      if (userBlockedDomains && userBlockedDomains.includes(domain)) {
-        updateTabWithAnalysis({ 
-          isProductive: false, 
-          score: 0, 
-          categories: ['User Blocked'], 
-          explanation: 'Domain is in user-blocked list',
-          isLocalAnalysis: true // Flag to indicate local analysis
-        });
-        return;
-      }
-      
-      // 2. Apply any URL pattern-based rules
-      // You could add URL pattern rules here if needed
-      
-      // 3. Use fallback local categorization for common domains
-      // (This is a simplified heuristic approach, expand as needed)
-      const localCategorization = getLocalDomainCategorization(domain);
-      if (localCategorization) {
-        updateTabWithAnalysis({
-          ...localCategorization,
-          isLocalAnalysis: true // Flag to indicate local analysis
-        });
-        return;
-      }
-    }
+    // Rest of the existing analyzeTabTitle code
+    // ...
 
-    // Rest of the existing code for API-based analysis
-    // ... (Keep the original API code here)
-    
     // Check if user spent at least 5 seconds on the tab
     if (!force && !currentTab.lastUpdateTime) {
       console.log('Not enough time spent on tab for analysis');
@@ -956,44 +1134,19 @@ async function analyzeTabTitle(title, url, force=false) {
       await StorageUtil.set({ apiCallDate, apiCallCount });
     }
     
-    // In productive mode, if we've reached the API limit, use local fallback categorization
     if (apiCallCount >= 300) {
-      console.warn('API call limit reached for today (300). Using local categorization.');
+      console.warn('API call limit reached for today (300). Analysis skipped.');
+      console.log('Current API call count:', apiCallCount);
       
-      // Prioritize user preferences
+      // Extract domain from URL to check if it's in user-blocked domains
+      const domain = extractDomain(url);
+      
+      // If domain is in user-blocked domains, mark as non-productive
+      // Otherwise, mark as productive (fallback to user preferences instead of API)
       if (userBlockedDomains && userBlockedDomains.includes(domain)) {
-        updateTabWithAnalysis({
-          isProductive: false,
-          score: 0,
-          categories: ['User Blocked'],
-          explanation: 'Domain is in user-blocked list. API limit reached.',
-          isLocalAnalysis: true
-        });
+        updateTabWithAnalysis({ isProductive: false, score: 0, categories: ['User Blocked'], explanation: 'Domain is in user-blocked list. API limit reached.' });
       } else {
-        // If productive mode is enabled, we need to make a decision with local data
-        if (productiveMode.enabled) {
-          // Use a more conservative approach for productive mode
-          const localResult = getLocalDomainCategorization(domain) || {
-            isProductive: false, // Default to non-productive to be safe
-            score: 40,
-            categories: ['Local Fallback'],
-            explanation: 'API limit reached. Using conservative local evaluation.'
-          };
-          
-          updateTabWithAnalysis({
-            ...localResult,
-            isLocalAnalysis: true
-          });
-        } else {
-          // For non-productive mode, we can be more lenient
-          updateTabWithAnalysis({
-            isProductive: true,
-            score: CONFIG.PRODUCTIVITY_THRESHOLD,
-            categories: ['API Limit'],
-            explanation: 'API limit reached. Defaulting to productive since domain is not blocked by user.',
-            isLocalAnalysis: true
-          });
-        }
+        updateTabWithAnalysis({ isProductive: true, score: CONFIG.PRODUCTIVITY_THRESHOLD, categories: ['API Limit'], explanation: 'API limit reached. Defaulting to productive since domain is not blocked by user.' });
       }
       return;
     }
@@ -1004,49 +1157,9 @@ async function analyzeTabTitle(title, url, force=false) {
     const analysisTimeout = setTimeout(() => {
       if (currentTab.isAnalyzing) {
         console.log(`Analysis timeout for ${url}`);
-        
-        // If in productive mode, use local categorization on timeout
-        if (productiveMode.enabled) {
-          const localResult = getLocalDomainCategorization(domain) || {
-            isProductive: false, // Default to non-productive on timeout
-            score: 30,
-            categories: ['Timeout'],
-            explanation: 'Analysis timed out. Using local evaluation.'
-          };
-          
-          updateTabWithAnalysis({
-            ...localResult,
-            isLocalAnalysis: true
-          });
-        } else {
-          updateTabWithAnalysis({
-            isProductive: false,
-            score: 0,
-            categories: [],
-            explanation: 'Analysis timed out',
-            isLocalAnalysis: true
-          });
-        }
+        updateTabWithAnalysis({ isProductive: false, score: 0, categories: [], explanation: 'Analysis timed out' });
       }
     }, CONFIG.ANALYSIS_TIMEOUT);
-    
-    // Only make API calls if offline mode is not enabled
-    if (productiveMode.offlineMode) {
-      // If offline mode is enabled, use local categorization only
-      clearTimeout(analysisTimeout);
-      const localResult = getLocalDomainCategorization(domain) || {
-        isProductive: false,
-        score: 35,
-        categories: ['Offline'],
-        explanation: 'Offline mode enabled. Using local evaluation.'
-      };
-      
-      updateTabWithAnalysis({
-        ...localResult,
-        isLocalAnalysis: true
-      });
-      return;
-    }
     
     // Prepare request data
     const requestData = {
@@ -1059,175 +1172,49 @@ async function analyzeTabTitle(title, url, force=false) {
     apiCallCount++;
     await StorageUtil.set({ apiCallCount, apiCallDate });
     
-    try {
-      // Send request to backend
-      const response = await fetch(`${CONFIG.BACKEND_URL}/api/analyze-title`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(requestData)
-      });
-      
-      // Clear the timeout since we got a response
-      clearTimeout(analysisTimeout);
-      
-      // Check if response is ok
-      if (!response.ok) {
-        throw new Error(`Server responded with ${response.status}: ${response.statusText}`);
-      }
-      
-      // Parse response
-      const analysis = await response.json();
-      
-      // Process analysis result
-      if (!analysis.score && analysis.score !== 0) analysis.score = 0;
-      if (typeof analysis.score === 'string') analysis.score = parseFloat(analysis.score);
-      if (analysis.score <= 1 && analysis.score >= 0) analysis.score = Math.round(analysis.score * 100);
-      else analysis.score = Math.min(100, Math.max(0, analysis.score));
-      
-      const isProductive = analysis.score >= CONFIG.PRODUCTIVITY_THRESHOLD;
-      
-      // Cache the result using the improved CacheManager
-      await CacheManager.addToCache(url, { 
-        isProductive, 
-        score: analysis.score, 
-        categories: analysis.categories, 
-        explanation: analysis.explanation
-      });
-      
-      // Update tab data
-      updateTabWithAnalysis({ 
-        isProductive, 
-        score: analysis.score, 
-        categories: analysis.categories, 
-        explanation: analysis.explanation
-      });
-    } catch (error) {
-      // Handle network or server errors
-      console.error('Error analyzing title:', error);
-      
-      // In productive mode, use local categorization on error
-      if (productiveMode.enabled) {
-        clearTimeout(analysisTimeout);
-        const localResult = getLocalDomainCategorization(domain) || {
-          isProductive: false, // Default to non-productive on error
-          score: 20,
-          categories: ['Error'],
-          explanation: `Error analyzing content: ${error.message}. Using local evaluation.`
-        };
-        
-        updateTabWithAnalysis({
-          ...localResult,
-          isLocalAnalysis: true
-        });
-      } else {
-        // Set default values for error
-        updateTabWithAnalysis({ 
-          isProductive: false, 
-          score: 0, 
-          categories: [], 
-          explanation: `Error analyzing content: ${error.message}`,
-          isLocalAnalysis: true
-        });
-      }
+    // Send request to backend
+    const response = await fetch(`${CONFIG.BACKEND_URL}/api/analyze-title`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(requestData)
+    });
+    
+    // Clear the timeout since we got a response
+    clearTimeout(analysisTimeout);
+    
+    // Check if response is ok
+    if (!response.ok) {
+      throw new Error(`Server responded with ${response.status}: ${response.statusText}`);
     }
+    
+    // Parse response
+    const analysis = await response.json();
+    
+    // Process analysis result
+    if (!analysis.score && analysis.score !== 0) analysis.score = 0;
+    if (typeof analysis.score === 'string') analysis.score = parseFloat(analysis.score);
+    if (analysis.score <= 1 && analysis.score >= 0) analysis.score = Math.round(analysis.score * 100);
+    else analysis.score = Math.min(100, Math.max(0, analysis.score));
+    
+    const isProductive = analysis.score >= CONFIG.PRODUCTIVITY_THRESHOLD;
+    
+    // Cache the result using the improved CacheManager
+    await CacheManager.addToCache(url, { 
+      isProductive, 
+      score: analysis.score, 
+      categories: analysis.categories, 
+      explanation: analysis.explanation
+    });
+    
+    // Update tab data
+    updateTabWithAnalysis({ isProductive, score: analysis.score, categories: analysis.categories, explanation: analysis.explanation });
+    
   } catch (error) {
-    console.error('Error in analyzeTabTitle function:', error);
+    console.error('Error analyzing title:', error);
     
     // Set default values for error
-    updateTabWithAnalysis({ 
-      isProductive: false, 
-      score: 0, 
-      categories: [], 
-      explanation: `Error analyzing content: ${error.message}`,
-      isLocalAnalysis: true
-    });
+    updateTabWithAnalysis({ isProductive: false, score: 0, categories: [], explanation: `Error analyzing content: ${error.message}` });
   }
-}
-
-/**
- * Helper function for local domain categorization
- * This provides a fallback when cloud services are unavailable
- */
-function getLocalDomainCategorization(domain) {
-  // Known productive domains by category (expand this list as needed)
-  const knownProductiveDomains = {
-    'education': [
-      'coursera.org', 'edx.org', 'udemy.com', 'khanacademy.org', 'freecodecamp.org',
-      'codecademy.com', 'pluralsight.com', 'skillshare.com', 'udacity.com', 'brilliant.org'
-    ],
-    'documentation': [
-      'docs.', 'documentation.', 'developer.', 'api.', 'reference.'
-    ],
-    'work': [
-      'slack.com', 'atlassian.', 'jira.', 'confluence.', 'asana.com',
-      'trello.com', 'notion.so', 'miro.com', 'airtable.com', 'monday.com',
-      'clickup.com', 'linear.app', 'figma.com', 'webex.', 'zoom.'
-    ],
-    'email': [
-      'mail.', 'gmail.', 'outlook.', 'proton.', 'yahoo.mail'
-    ],
-    'coding': [
-      'github.', 'gitlab.', 'bitbucket.', 'stackoverflow.', 'npmjs.',
-      'pypi.', 'mvnrepository.', 'rubygems.', 'rust-lang.', 'jetbrains.',
-      'vscode.', 'replit.', 'codesandbox.', 'codepen.'
-    ],
-    'office': [
-      'office.', 'microsoft.', 'google.docs', 'sheets.', 'slides.',
-      'drive.google.', 'onedrive.', 'sharepoint.'
-    ]
-  };
-  
-  // Known non-productive domains by category
-  const knownNonProductiveDomains = {
-    'social': [
-      'facebook.', 'twitter.', 'instagram.', 'tiktok.', 'pinterest.',
-      'reddit.', 'tumblr.', 'snapchat.', 'whatsapp.'
-    ],
-    'video': [
-      'youtube.', 'netflix.', 'hulu.', 'twitch.', 'vimeo.',
-      'disneyplus.', 'primevideo.', 'hbomax.'
-    ],
-    'gaming': [
-      'steam.', 'epicgames.', 'playstation.', 'xbox.', 'nintendo.',
-      'roblox.', 'ea.com', 'blizzard.', 'ubisoft.', 'rockstargames.',
-      'ign.', 'gamespot.', 'kotaku.', 'polygon.'
-    ],
-    'shopping': [
-      'amazon.', 'ebay.', 'walmart.', 'target.', 'bestbuy.',
-      'etsy.', 'wish.', 'aliexpress.', 'shein.', 'wayfair.'
-    ],
-    'news': [
-      'cnn.', 'foxnews.', 'bbc.', 'nytimes.', 'washingtonpost.',
-      'theguardian.', 'huffpost.', 'buzzfeed.', 'vice.'
-    ]
-  };
-  
-  // Check if domain matches any known productive patterns
-  for (const [category, domains] of Object.entries(knownProductiveDomains)) {
-    if (domains.some(prod => domain.includes(prod))) {
-      return {
-        isProductive: true,
-        score: 75, // Conservative score
-        categories: [category.charAt(0).toUpperCase() + category.slice(1)],
-        explanation: `Locally categorized as productive (${category})`
-      };
-    }
-  }
-  
-  // Check if domain matches any known non-productive patterns
-  for (const [category, domains] of Object.entries(knownNonProductiveDomains)) {
-    if (domains.some(nonProd => domain.includes(nonProd))) {
-      return {
-        isProductive: false,
-        score: 25, // Conservative score
-        categories: [category.charAt(0).toUpperCase() + category.slice(1)],
-        explanation: `Locally categorized as non-productive (${category})`
-      };
-    }
-  }
-  
-  // If no matches were found, return null
-  return null;
 }
 
 /**
@@ -1246,8 +1233,33 @@ async function analyzeContent(title, url, extractedContent, force=false) {
     return;
   }
   
+  // Extract domain for always productive/non-productive checks
+  const domain = extractDomain(url);
+  
+  // Check for always productive domains first
+  if (CONFIG.ALWAYS_PRODUCTIVE_DOMAINS.some(prodDomain => domain.includes(prodDomain))) {
+    updateTabWithAnalysis({ 
+      isProductive: true, 
+      score: 100, 
+      categories: ['Work Tool'], 
+      explanation: 'Automatically marked as productive (work tool)' 
+    });
+    return;
+  }
+  
+  // Check for always non-productive domains
+  if (CONFIG.ALWAYS_NON_PRODUCTIVE_DOMAINS.some(nonProdDomain => domain.includes(nonProdDomain))) {
+    updateTabWithAnalysis({ 
+      isProductive: false, 
+      score: 0, 
+      categories: ['Entertainment', 'Shopping', 'Gaming'], 
+      explanation: 'Automatically marked as non-productive' 
+    });
+    return;
+  }
+  
   // Check for manual override first
-  const overrides = (await chrome.storage.local.get('overrides')).overrides || {};
+  const overrides = (await StorageUtil.get('overrides')).overrides || {};
   if (overrides[url] === true) {
     updateTabWithAnalysis({ isProductive: true, score: 100, categories: ['Manual'], explanation: 'User override: productive' });
     return;
@@ -1270,7 +1282,7 @@ async function analyzeContent(title, url, extractedContent, force=false) {
   if (apiCallDate !== today) {
     apiCallDate = today;
     apiCallCount = 0;
-    await chrome.storage.local.set({ apiCallDate, apiCallCount });
+    await StorageUtil.set({ apiCallDate, apiCallCount });
   }
   
   if (apiCallCount >= 300) {
@@ -1291,7 +1303,6 @@ async function analyzeContent(title, url, extractedContent, force=false) {
     }, CONFIG.ANALYSIS_TIMEOUT);
     
     // Prepare request data with extracted content
-    const domain = extractDomain(url);
     const requestData = {
       title: title,
       content: extractedContent.content || '',
@@ -1302,7 +1313,7 @@ async function analyzeContent(title, url, extractedContent, force=false) {
     
     // Increment API call count
     apiCallCount++;
-    await chrome.storage.local.set({ apiCallCount, apiCallDate });
+    await StorageUtil.set({ apiCallDate, apiCallCount });
     
     // Send request to backend
     const response = await fetch(`${CONFIG.BACKEND_URL}/api/analyze-content`, {
@@ -1612,6 +1623,22 @@ function handleMessages(message, sender, sendResponse) {
           const settings = data.settings || {};
           settings.theme = message.theme;
           chrome.storage.local.set({ settings });
+          
+          // Apply theme-appropriate styles
+          applyThemeStyles();
+        });
+        sendResponse({ success: true });
+        break;
+      
+      case 'setTransparentIcons':
+        // Set transparent icons preference
+        chrome.storage.local.get(['settings'], function(data) {
+          const settings = data.settings || {};
+          settings.transparentIcons = message.enabled;
+          chrome.storage.local.set({ settings });
+          
+          // Apply theme-appropriate styles
+          applyThemeStyles();
         });
         sendResponse({ success: true });
         break;
@@ -1699,15 +1726,6 @@ function handleMessages(message, sender, sendResponse) {
         
         sendResponse({ success: true });
         return true;
-        
-      case 'setOfflineMode':
-        // Toggle offline mode (local categorization only)
-        productiveMode.offlineMode = message.enabled;
-        StorageUtil.set({ productiveMode }).catch(error => {
-          console.error('Error saving offline mode setting:', error);
-        });
-        sendResponse({ success: true });
-        break;
         
       default:
         console.warn(`Unknown message action: ${message.action}`);
@@ -1847,41 +1865,41 @@ async function updateTimeTracking() {
       } else if (!currentTab.isAnalyzing) {
         // Only update categories if we're not analyzing
         let isReallyProductive = currentTab.score >= CONFIG.PRODUCTIVITY_THRESHOLD;
-        
-        // Check for manual override for the current URL
-        let manualOverride = null;
-        if (currentTab.url) {
-          const overrides = (await chrome.storage.local.get('overrides')).overrides || {};
-          if (overrides[currentTab.url] === true) manualOverride = true;
-          if (overrides[currentTab.url] === false) manualOverride = false;
-        }
-        
-        if (manualOverride === true) isReallyProductive = true;
-        if (manualOverride === false) isReallyProductive = false;
-        
-        if (isReallyProductive) {
-          domainTracking[currentTab.domain].productiveTime += timeSinceLastUpdate;
-          domainTracking[currentTab.domain].productiveScore = currentTab.score;
-          stats.productiveTime += timeSinceLastUpdate;
-          console.log(`Added ${Math.round(timeSinceLastUpdate/1000)}s to productive time for ${currentTab.domain}`);
-        } else {
-          domainTracking[currentTab.domain].nonProductiveTime += timeSinceLastUpdate;
+      
+      // Check for manual override for the current URL
+      let manualOverride = null;
+      if (currentTab.url) {
+        const overrides = (await chrome.storage.local.get('overrides')).overrides || {};
+        if (overrides[currentTab.url] === true) manualOverride = true;
+        if (overrides[currentTab.url] === false) manualOverride = false;
+      }
+      
+      if (manualOverride === true) isReallyProductive = true;
+      if (manualOverride === false) isReallyProductive = false;
+      
+      if (isReallyProductive) {
+        domainTracking[currentTab.domain].productiveTime += timeSinceLastUpdate;
+        domainTracking[currentTab.domain].productiveScore = currentTab.score;
+        stats.productiveTime += timeSinceLastUpdate;
+        console.log(`Added ${Math.round(timeSinceLastUpdate/1000)}s to productive time for ${currentTab.domain}`);
+      } else {
+        domainTracking[currentTab.domain].nonProductiveTime += timeSinceLastUpdate;
           domainTracking[currentTab.domain].nonProductiveScore = currentTab.score;
-          stats.nonProductiveTime += timeSinceLastUpdate;
-          console.log(`Added ${Math.round(timeSinceLastUpdate/1000)}s to non-productive time for ${currentTab.domain}`);
+        stats.nonProductiveTime += timeSinceLastUpdate;
+        console.log(`Added ${Math.round(timeSinceLastUpdate/1000)}s to non-productive time for ${currentTab.domain}`);
           
           // --- Per-URL timer logic for productive mode ---
-          if (productiveMode.enabled && !blockedUrls[currentTab.url]) {
-            if (!productiveMode.urlTimers) productiveMode.urlTimers = {};
-            if (productiveMode.lastActiveTimestamp) {
-              productiveMode.urlTimers[currentTab.url] = (productiveMode.urlTimers[currentTab.url] || 0) + (now - productiveMode.lastActiveTimestamp);
-              productiveMode.activeTabTime = productiveMode.urlTimers[currentTab.url];
-              productiveMode.lastActiveTimestamp = now;
-              chrome.storage.local.set({ productiveMode });
-            }
+        if (productiveMode.enabled && !blockedUrls[currentTab.url]) {
+          if (!productiveMode.urlTimers) productiveMode.urlTimers = {};
+          if (productiveMode.lastActiveTimestamp) {
+            productiveMode.urlTimers[currentTab.url] = (productiveMode.urlTimers[currentTab.url] || 0) + (now - productiveMode.lastActiveTimestamp);
+            productiveMode.activeTabTime = productiveMode.urlTimers[currentTab.url];
+            productiveMode.lastActiveTimestamp = now;
+            chrome.storage.local.set({ productiveMode });
           }
-          // ---
         }
+        // ---
+      }
       }
       
       // Update domain visits regardless of analysis state
@@ -1982,7 +2000,7 @@ async function updateTimeTracking() {
 /**
  * Reset all statistics
  */
-function resetStats() {
+async function resetStats() {
   stats = {
     productiveTime: 0,
     nonProductiveTime: 0,
@@ -1995,8 +2013,15 @@ function resetStats() {
   
   // Note: We don't clear the URL cache when resetting stats
   
-  chrome.storage.local.set({ stats, domainTracking });
-  console.log('Statistics reset');
+  try {
+    await StorageUtil.set({ stats, domainTracking });
+    console.log('Statistics reset successfully');
+  } catch (error) {
+    console.error('Error resetting stats:', error, {
+      platform: navigator.platform,
+      timestamp: new Date().toISOString()
+    });
+  }
 }
 
 /**
@@ -2005,6 +2030,7 @@ function resetStats() {
 async function maybeResetStatsDaily() {
   const today = getTodayString();
   if (statsResetDate !== today) {
+    try {
     // Reset all stats
     stats = {
       productiveTime: 0,
@@ -2015,8 +2041,19 @@ async function maybeResetStatsDaily() {
     };
     domainTracking = {};
     statsResetDate = today;
-    await chrome.storage.local.set({ stats, domainTracking, statsResetDate });
-    console.log('Daily stats reset');
+      
+      await StorageUtil.set({ stats, domainTracking, statsResetDate });
+      console.log('Daily stats reset successfully', {
+        date: today,
+        platform: navigator.platform,
+        timestamp: new Date().toISOString()
+      });
+    } catch (error) {
+      console.error('Error during daily stats reset:', error, {
+        platform: navigator.platform,
+        timestamp: new Date().toISOString()
+      });
+    }
   }
 }
 
@@ -2053,6 +2090,11 @@ function updateExtensionIcon(tab) {
         iconPath = 'icons/red.png';
         badgeText = '!';
         badgeColor = '#f44336';
+      } else if (tab.isAnalyzing) {
+        // Show orange icon with ? badge for analyzing state
+        iconPath = 'icons/orange.png';
+        badgeText = '?';
+        badgeColor = '#ff9800';
       } else if (tab.isProductive) {
         iconPath = 'icons/green.png';
         badgeText = '✓';
@@ -2070,14 +2112,18 @@ function updateExtensionIcon(tab) {
           badgeColor = '#f44336';
         }
       } else {
-        // Analyzing
+        // Default for unknown state
         iconPath = 'icons/prod.png'; // Changed to prod.png
         badgeText = '?';
         badgeColor = '#2196f3';
       }
     } else {
       // Not in productive mode
-      if (tab.isProductive) {
+      if (tab.isAnalyzing) {
+        iconPath = 'icons/orange.png';
+        badgeText = '?';
+        badgeColor = '#ff9800';
+      } else if (tab.isProductive) {
         iconPath = 'icons/green.png';
       } else if (tab.isProductive === false) {
         iconPath = 'icons/red.png';
@@ -2085,8 +2131,10 @@ function updateExtensionIcon(tab) {
     }
     
     // Check for manual override
-    chrome.storage.local.get(['overrides'], function(data) {
+    chrome.storage.local.get(['overrides', 'settings'], function(data) {
       const overrides = data.overrides || {};
+      const settings = data.settings || {};
+      const isDarkMode = settings.theme === 'dark';
       
       if (tab.url && overrides[tab.url] === true) {
         iconPath = 'icons/green.png';
@@ -2100,7 +2148,7 @@ function updateExtensionIcon(tab) {
       // Always use orange icon if iconState is set to orange
       else if (tab.iconState === 'orange') {
         iconPath = 'icons/orange.png';
-        badgeText = '!';
+        badgeText = '?';
         badgeColor = '#ff9800';
       }
       
@@ -2117,10 +2165,19 @@ function updateExtensionIcon(tab) {
       // Set badge text and color
       chrome.action.setBadgeText({ text: badgeText });
       chrome.action.setBadgeBackgroundColor({ color: badgeColor });
+      
+      // Apply dark mode-friendly style to the badge
+      if (isDarkMode) {
+        chrome.action.setBadgeTextColor({ color: '#ffffff' });
+        // We can't change the icon background but we can adjust badge text color
+      }
     });
     
   } catch (error) {
-    console.error('Error updating extension icon:', error);
+    console.error('Error updating extension icon:', error, {
+      platform: navigator.platform,
+      timestamp: new Date().toISOString()
+    });
   }
 }
 
@@ -2155,6 +2212,39 @@ async function setupSPAContentScripts() {
   }
 }
 
+/**
+ * Apply theme-appropriate styles for the extension
+ */
+async function applyThemeStyles() {
+  try {
+    const data = await StorageUtil.get(['settings']);
+    const settings = data.settings || { theme: 'light', transparentIcons: true };
+    
+    if (settings.theme === 'dark') {
+      // In dark mode, we make sure text is visible
+      chrome.action.setBadgeTextColor({ color: '#ffffff' });
+    } else {
+      // In light mode, we use default text color
+      chrome.action.setBadgeTextColor({ color: '#ffffff' });
+    }
+    
+    // We'll also update the current tab icon to reflect theme changes
+    if (currentTab) {
+      updateExtensionIcon(currentTab);
+    }
+  } catch (error) {
+    console.error('Error applying theme styles:', error, {
+      platform: navigator.platform,
+      timestamp: new Date().toISOString()
+    });
+  }
+}
+
 // Initialize the extension when loaded
-init();
+init().catch(error => {
+  console.error('Failed to initialize extension:', error, {
+    platform: navigator.platform,
+    timestamp: new Date().toISOString()
+  });
+});
 
