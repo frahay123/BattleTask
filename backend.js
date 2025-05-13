@@ -211,8 +211,67 @@ app.post('/api/analyze-title', async (req, res) => {
   }
 });
 
+// --- Domain-level classification endpoint ---
+app.post('/api/classify-domain', async (req, res) => {
+  try {
+    const { domain } = req.body;
+    if (!domain) {
+      return res.status(400).json({ success: false, error: 'Domain is required' });
+    }
+    // Construct Gemini prompt for domain-level classification
+    const prompt = `For the domain: ${domain}\n\nCan this domain ever be unproductive for a user?\n- If it is always productive (e.g., only work tools), reply: {\"onlyProductive\": true, \"onlyNonProductive\": false}\n- If it is always non-productive (e.g., only entertainment), reply: {\"onlyProductive\": false, \"onlyNonProductive\": true}\n- If it can be both, reply: {\"onlyProductive\": false, \"onlyNonProductive\": false}\n\nReply only with the JSON object.`;
+    const result = await model.generateContent(prompt);
+    let responseText = result.response.text();
+    // Extract JSON from response
+    let jsonMatch = responseText.match(/\{[\s\S]*\}/);
+    let data = jsonMatch ? JSON.parse(jsonMatch[0]) : JSON.parse(responseText);
+    // Fallback defaults
+    if (typeof data.onlyProductive !== 'boolean') data.onlyProductive = false;
+    if (typeof data.onlyNonProductive !== 'boolean') data.onlyNonProductive = false;
+    res.json({ success: true, ...data });
+  } catch (error) {
+    console.error('Error in /api/classify-domain:', error);
+    res.status(500).json({ success: false, error: 'Internal server error' });
+  }
+});
+
+// --- URL-level classification endpoint ---
+app.post('/api/classify-url', async (req, res) => {
+  try {
+    const { url, domain, title, content } = req.body;
+    if (!url) {
+      return res.status(400).json({ success: false, error: 'URL is required' });
+    }
+    // Construct Gemini prompt for URL-level classification
+    const prompt = `Classify the following web page for productivity.\n\nURL: ${url}\nDomain: ${domain || ''}\nTitle: ${title || ''}\nContent: ${content || ''}\n\nReturn JSON:\n- isProductive (bool)\n- score (0–100)\n- categories (array of strings)\n- explanation (string)\n`;
+    const result = await model.generateContent(prompt);
+    let responseText = result.response.text();
+    // Extract JSON from response
+    if (responseText.includes('```json')) {
+      responseText = responseText.split('```json')[1].split('```')[0].trim();
+    } else if (responseText.includes('```')) {
+      responseText = responseText.split('```')[1].split('```')[0].trim();
+    }
+    const analysis = JSON.parse(responseText);
+    // Normalize fields
+    if (!analysis.isProductive) analysis.isProductive = false;
+    if (!analysis.score && analysis.score !== 0) analysis.score = 0;
+    if (typeof analysis.score === 'string') analysis.score = parseFloat(analysis.score);
+    if (analysis.score <= 1 && analysis.score >= 0) analysis.score = Math.round(analysis.score * 100);
+    else analysis.score = Math.min(100, Math.max(0, analysis.score));
+    if (!analysis.categories) analysis.categories = [];
+    if (!analysis.explanation) analysis.explanation = '';
+    res.json({ success: true, ...analysis });
+  } catch (error) {
+    console.error('Error in /api/classify-url:', error);
+    res.status(500).json({ success: false, error: 'Internal server error' });
+  }
+});
+
 // Start the server
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
   console.log(`Access at http://localhost:${PORT}`);
 });
+
+module.exports = app;
