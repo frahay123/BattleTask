@@ -68,12 +68,14 @@ async function analyzeTabTitle(title, url, domain) {
       isProductive: false,
       score: 0,
       categories: [],
-      explanation: ''
+      explanation: '',
+      domainCategory: 'unknown',
+      domainReason: 'Empty or new tab'
     };
   }
 
   try {
-    // Create prompt for Gemini
+    // Create prompt for Gemini with emphasis on domain categorization
     const prompt = `
 Classify tab: "${title}" (URL: ${url}, Domain: ${domain})
 
@@ -82,8 +84,15 @@ Return JSON:
 - score (0-100)
 - categories (array)
 - explanation (string)
-- domainCategory ("always-productive", "always-nonproductive", "context-dependent")
+- domainCategory (string, must be one of: "always-productive", "always-nonproductive", "context-dependent")
 - domainReason (string)
+
+domainCategory explanation:
+- "always-productive": Domain is used exclusively for work/education (github, docs.google)
+- "always-nonproductive": Domain is exclusively for entertainment/social/shopping (netflix, instagram)
+- "context-dependent": Domain can be both productive and non-productive (youtube, reddit)
+
+NOTE: Domain categorization is CRITICAL. Be decisive about domainCategory - avoid "context-dependent" unless truly necessary.
 
 Productive if:
 1. Educational content
@@ -92,11 +101,6 @@ Productive if:
 4. Research
 5. Productivity tools
 6. Email
-
-Context notes:
-- youtube.com: context-dependent
-- docs.google.com: always-productive
-- netflix.com: always-nonproductive
     `;
 
     // Make request to Gemini API
@@ -137,19 +141,23 @@ Context notes:
     if (!analysis.categories) analysis.categories = [];
     if (!analysis.explanation) analysis.explanation = '';
     
-    // Add domain categorization if not present
-    if (!analysis.domainCategory) {
+    // Strengthen domain categorization
+    if (!analysis.domainCategory || !['always-productive', 'always-nonproductive', 'context-dependent'].includes(analysis.domainCategory)) {
+      // Force a domainCategory based on score if missing
       if (analysis.score >= 80) {
         analysis.domainCategory = 'always-productive';
-        analysis.domainReason = 'Domain appears to contain primarily productive content';
+        analysis.domainReason = 'High productivity score indicates this domain is primarily for productive activities';
       } else if (analysis.score <= 20) {
         analysis.domainCategory = 'always-nonproductive';
-        analysis.domainReason = 'Domain appears to contain primarily non-productive content';
+        analysis.domainReason = 'Low productivity score indicates this domain is primarily for non-productive activities';
       } else {
         analysis.domainCategory = 'context-dependent';
-        analysis.domainReason = 'Domain can contain both productive and non-productive content';
+        analysis.domainReason = 'Domain contains mixed content that may be productive or non-productive depending on context';
       }
     }
+
+    // Attach original domain to response for reference
+    analysis.domain = domain;
 
     return analysis;
   } catch (error) {
@@ -160,7 +168,8 @@ Context notes:
       categories: [],
       explanation: 'Error during analysis',
       domainCategory: 'context-dependent',
-      domainReason: 'Unable to categorize domain due to analysis error'
+      domainReason: 'Unable to categorize domain due to analysis error',
+      domain: domain
     };
   }
 }
@@ -211,26 +220,37 @@ async function analyzeContent(title, content, url = '', domain = '') {
         categories: [],
         explanation: "Unable to analyze: Missing title or content",
         domainCategory: "unknown",
-        domainReason: "Insufficient data for domain categorization"
+        domainReason: "Insufficient data for domain categorization",
+        domain: domain
       };
     }
 
     // Limit content length to avoid token limits
     const truncatedContent = content.substring(0, 2000);
     
-    // Create prompt for the model
+    // Create prompt for the model with emphasis on domain categorization
     const prompt = `
-Analyze: "${title}" (Domain: ${domain})
+Analyze: "${title}" (URL: ${url}, Domain: ${domain})
 
-Content: "${truncatedContent}"
+Content snippet:
+"""
+${truncatedContent}
+"""
 
 Return JSON:
 - isProductive (bool)
 - score (0-1)
 - categories (array)
 - explanation (string)
-- domainCategory (string)
+- domainCategory (string, must be one of: "always-productive", "always-nonproductive", "context-dependent")
 - domainReason (string)
+
+domainCategory explanation:
+- "always-productive": Domain is used exclusively for work/education (github, docs.google)
+- "always-nonproductive": Domain is exclusively for entertainment/social/shopping (netflix, instagram)
+- "context-dependent": Domain can be both productive and non-productive (youtube, reddit)
+
+NOTE: Domain categorization is CRITICAL. Be decisive about domainCategory - avoid "context-dependent" unless truly necessary.
     `;
 
     // Call the Gemini API
@@ -243,14 +263,41 @@ Return JSON:
       
       if (jsonMatch) {
         const analysisResult = JSON.parse(jsonMatch[0]);
-        return {
+        
+        // Normalize the score to 0-100 range if it's in 0-1
+        let score = analysisResult.score || 0;
+        if (score <= 1 && score >= 0) {
+          score = Math.round(score * 100);
+        } else {
+          score = Math.min(100, Math.max(0, score));
+        }
+        
+        const result = {
           isProductive: analysisResult.isProductive || false,
-          score: analysisResult.score || 0,
+          score: score,
           categories: analysisResult.categories || [],
           explanation: analysisResult.explanation || "No explanation provided",
           domainCategory: analysisResult.domainCategory || "unknown",
-          domainReason: analysisResult.domainReason || "No domain categorization reason provided"
+          domainReason: analysisResult.domainReason || "No domain categorization reason provided",
+          domain: domain
         };
+        
+        // Strengthen domain categorization if missing or invalid
+        if (!result.domainCategory || !['always-productive', 'always-nonproductive', 'context-dependent'].includes(result.domainCategory)) {
+          // Force a domainCategory based on score if missing
+          if (result.score >= 80) {
+            result.domainCategory = 'always-productive';
+            result.domainReason = 'High productivity score based on content analysis indicates this domain is primarily for productive activities';
+          } else if (result.score <= 20) {
+            result.domainCategory = 'always-nonproductive';
+            result.domainReason = 'Low productivity score based on content analysis indicates this domain is primarily for non-productive activities';
+          } else {
+            result.domainCategory = 'context-dependent';
+            result.domainReason = 'Content analysis shows this domain contains mixed content that may be productive or non-productive depending on context';
+          }
+        }
+        
+        return result;
       } else {
         throw new Error("Failed to extract JSON from API response");
       }
@@ -367,6 +414,73 @@ function extractDomain(url) {
     return '';
   }
 }
+
+// Add a domain categorization API endpoint
+app.post('/api/domain-category', async (req, res) => {
+  try {
+    const { domain } = req.body;
+    
+    if (!domain) {
+      return res.status(400).json({ success: false, error: 'Domain parameter is required' });
+    }
+    
+    // Create a special prompt specifically for domain categorization
+    const prompt = `
+Categorize this domain: "${domain}"
+
+Your task is to categorize this domain into one of three categories:
+1. "always-productive": Domain is used exclusively for work, education, or productivity tools
+2. "always-nonproductive": Domain is used exclusively for entertainment, social media, or shopping
+3. "context-dependent": Domain can be both productive and non-productive depending on specific content
+
+You must choose ONLY ONE category. Avoid choosing "context-dependent" unless it's absolutely necessary.
+
+Return ONLY a JSON object with these fields:
+- category: one of the three categories above
+- reason: brief explanation for this categorization (1-2 sentences)
+- urlPatterns: for context-dependent domains only, a list of URL patterns that would indicate productive vs non-productive content
+`;
+
+    // Make request to Gemini API
+    const result = await model.generateContent(prompt);
+    const response = result.response;
+    let responseText = response.text();
+
+    // Check if the response is valid JSON by removing markdown formatting if present
+    if (responseText.includes('```json')) {
+      responseText = responseText.split('```json')[1].split('```')[0].trim();
+    } else if (responseText.includes('```')) {
+      responseText = responseText.split('```')[1].split('```')[0].trim();
+    }
+
+    // Extract JSON 
+    const jsonMatch = responseText.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) {
+      throw new Error('Failed to parse JSON response from AI model');
+    }
+    
+    const analysis = JSON.parse(jsonMatch[0]);
+    
+    // Validate the response
+    if (!analysis.category || !['always-productive', 'always-nonproductive', 'context-dependent'].includes(analysis.category)) {
+      throw new Error('Invalid category in AI response');
+    }
+    
+    // Add timestamp for freshness tracking
+    analysis.timestamp = new Date().toISOString();
+    analysis.domain = domain;
+    
+    // Return the categorization
+    res.json({
+      success: true,
+      domain: domain,
+      categorization: analysis
+    });
+  } catch (error) {
+    console.error('Error categorizing domain:', error);
+    res.status(500).json({ success: false, error: 'Internal server error. Please try again later.' });
+  }
+});
 
 // Start the server
 app.listen(PORT, () => {
