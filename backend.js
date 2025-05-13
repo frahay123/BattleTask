@@ -62,7 +62,7 @@ app.use('/api/', userLimiter);
 /**
  * Analyze a tab title to determine if it's productive content
  */
-async function analyzeTabTitle(title) {
+async function analyzeTabTitle(title, url, domain) {
   if (!title || title.trim() === '' || title === 'New Tab') {
     return {
       isProductive: false,
@@ -75,21 +75,28 @@ async function analyzeTabTitle(title) {
   try {
     // Create prompt for Gemini
     const prompt = `
-      Classify tab title: "${title}"
+Classify tab: "${title}" (URL: ${url}, Domain: ${domain})
 
-      Return JSON:
-      - isProductive (bool)
-      - score (0–100)
-      - categories (word)
-  
+Return JSON:
+- isProductive (bool)
+- score (0-100)
+- categories (array)
+- explanation (string)
+- domainCategory ("always-productive", "always-nonproductive", "context-dependent")
+- domainReason (string)
 
-      Productive if:
-      1. Educational content (math, science, history, programming, etc.)
-      2. Professional development (job search, career resources, skill building)
-      3. Work-related tools and platforms (project management, coding, documentation, AI)
-      4. Research or academic topics
-      5. Productivity tools and resources
-      6. Email is always productive
+Productive if:
+1. Educational content
+2. Professional development
+3. Work tools
+4. Research
+5. Productivity tools
+6. Email
+
+Context notes:
+- youtube.com: context-dependent
+- docs.google.com: always-productive
+- netflix.com: always-nonproductive
     `;
 
     // Make request to Gemini API
@@ -129,6 +136,20 @@ async function analyzeTabTitle(title) {
     
     if (!analysis.categories) analysis.categories = [];
     if (!analysis.explanation) analysis.explanation = '';
+    
+    // Add domain categorization if not present
+    if (!analysis.domainCategory) {
+      if (analysis.score >= 80) {
+        analysis.domainCategory = 'always-productive';
+        analysis.domainReason = 'Domain appears to contain primarily productive content';
+      } else if (analysis.score <= 20) {
+        analysis.domainCategory = 'always-nonproductive';
+        analysis.domainReason = 'Domain appears to contain primarily non-productive content';
+      } else {
+        analysis.domainCategory = 'context-dependent';
+        analysis.domainReason = 'Domain can contain both productive and non-productive content';
+      }
+    }
 
     return analysis;
   } catch (error) {
@@ -137,8 +158,111 @@ async function analyzeTabTitle(title) {
       isProductive: false,
       score: 0,
       categories: [],
-      explanation: 'Error during analysis'
+      explanation: 'Error during analysis',
+      domainCategory: 'context-dependent',
+      domainReason: 'Unable to categorize domain due to analysis error'
     };
+  }
+}
+
+// Analyze content directly from the frontend or browser extension
+app.post('/api/analyze-content', async (req, res) => {
+  try {
+    const { title, url, content } = req.body;
+    
+    if (!title || !content) {
+      return res.status(400).json({ success: false, error: 'Title and content are required' });
+    }
+    
+    // Sanitize inputs
+    const cleanTitle = validator.escape(title);
+    
+    // Extract domain
+    const domain = url ? extractDomain(url) : '';
+    
+    // Analyze the content for productive status
+    const analysis = await analyzeContent(cleanTitle, content, url || '', domain);
+    
+    res.json({
+      success: true,
+      ...analysis
+    });
+  } catch (error) {
+    console.error('Error analyzing content:', error);
+    res.status(500).json({ success: false, error: 'Internal server error. Please try again later.' });
+  }
+});
+
+/**
+ * Analyze content to determine if it's productive
+ * @param {string} title - The title of the page
+ * @param {string} content - The content to analyze
+ * @param {string} url - The URL of the page
+ * @param {string} domain - The domain of the page
+ * @returns {Object} Analysis result
+ */
+async function analyzeContent(title, content, url = '', domain = '') {
+  try {
+    if (!title || !content) {
+      console.error("Missing title or content for analysis");
+      return {
+        isProductive: false,
+        score: 0,
+        categories: [],
+        explanation: "Unable to analyze: Missing title or content",
+        domainCategory: "unknown",
+        domainReason: "Insufficient data for domain categorization"
+      };
+    }
+
+    // Limit content length to avoid token limits
+    const truncatedContent = content.substring(0, 2000);
+    
+    // Create prompt for the model
+    const prompt = `
+Analyze: "${title}" (Domain: ${domain})
+
+Content: "${truncatedContent}"
+
+Return JSON:
+- isProductive (bool)
+- score (0-1)
+- categories (array)
+- explanation (string)
+- domainCategory (string)
+- domainReason (string)
+    `;
+
+    // Call the Gemini API
+    const result = await model.generateContent(prompt);
+
+    try {
+      const responseText = result.response.text();
+      // Extract JSON from the response
+      const jsonMatch = responseText.match(/\{[\s\S]*\}/);
+      
+      if (jsonMatch) {
+        const analysisResult = JSON.parse(jsonMatch[0]);
+        return {
+          isProductive: analysisResult.isProductive || false,
+          score: analysisResult.score || 0,
+          categories: analysisResult.categories || [],
+          explanation: analysisResult.explanation || "No explanation provided",
+          domainCategory: analysisResult.domainCategory || "unknown",
+          domainReason: analysisResult.domainReason || "No domain categorization reason provided"
+        };
+      } else {
+        throw new Error("Failed to extract JSON from API response");
+      }
+    } catch (parseError) {
+      console.error("Error parsing content analysis result:", parseError);
+      // Fall back to title-only analysis
+      return await analyzeTabTitle(title, url, domain);
+    }
+  } catch (error) {
+    console.error("Error in content analysis:", error);
+    // Fall back to title-only analysis as a backup
+    return await analyzeTabTitle(title, url, domain);
   }
 }
 
@@ -168,9 +292,12 @@ app.post('/api/tabs', async (req, res) => {
     }
     // Sanitize title
     const cleanTitle = validator.escape(tab.title);
+    
+    // Extract domain
+    const domain = extractDomain(tab.url);
 
     // Analyze the tab title for productive content
-    const analysis = await analyzeTabTitle(cleanTitle);
+    const analysis = await analyzeTabTitle(cleanTitle, tab.url, domain);
     
     res.json({ 
       success: true, 
@@ -179,7 +306,9 @@ app.post('/api/tabs', async (req, res) => {
         isProductive: analysis.isProductive,
         score: analysis.score,
         categories: analysis.categories,
-        explanation: analysis.explanation
+        explanation: analysis.explanation,
+        domainCategory: analysis.domainCategory,
+        domainReason: analysis.domainReason
       }
     });
   } catch (error) {
@@ -191,7 +320,7 @@ app.post('/api/tabs', async (req, res) => {
 // Analyze a title directly from the frontend
 app.post('/api/analyze-title', async (req, res) => {
   try {
-    const { title } = req.body;
+    const { title, url, domain } = req.body;
     
     if (!title) {
       return res.status(400).json({ success: false, error: 'Title is required' });
@@ -199,7 +328,10 @@ app.post('/api/analyze-title', async (req, res) => {
     // Sanitize title
     const cleanTitle = validator.escape(title);
     
-    const analysis = await analyzeTabTitle(cleanTitle);
+    // Use the provided domain or extract it from URL
+    const extractedDomain = domain || (url ? extractDomain(url) : '');
+    
+    const analysis = await analyzeTabTitle(cleanTitle, url || '', extractedDomain);
     
     res.json({
       success: true,
@@ -210,6 +342,31 @@ app.post('/api/analyze-title', async (req, res) => {
     res.status(500).json({ success: false, error: 'Internal server error. Please try again later.' });
   }
 });
+
+/**
+ * Extract domain from a URL
+ * @param {string} url - The URL to extract domain from
+ * @returns {string} The extracted domain
+ */
+function extractDomain(url) {
+  try {
+    if (!url) return '';
+    
+    // Remove protocol and get the hostname
+    let domain = url.replace(/(https?:\/\/)?(www\.)?/i, '');
+    
+    // Remove path and query string
+    domain = domain.split('/')[0];
+    
+    // Remove port if present
+    domain = domain.split(':')[0];
+    
+    return domain;
+  } catch (error) {
+    console.error('Error extracting domain:', error);
+    return '';
+  }
+}
 
 // Start the server
 app.listen(PORT, () => {
