@@ -482,6 +482,218 @@ Return ONLY a JSON object with these fields:
   }
 });
 
+// Add domain-analysis endpoint as an alias to domain-category to maintain compatibility
+app.post('/api/domain-analysis', async (req, res) => {
+  try {
+    const { domain, includePossibleCategories } = req.body;
+    
+    if (!domain) {
+      return res.status(400).json({ success: false, error: 'Domain parameter is required' });
+    }
+    
+    // Create a special prompt specifically for domain categorization
+    const prompt = `
+Categorize this domain: "${domain}"
+
+Your task is to categorize this domain into one of three categories:
+1. "always-productive": Domain is used exclusively for work, education, or productivity tools
+2. "always-nonproductive": Domain is used exclusively for entertainment, social media, or shopping
+3. "context-dependent": Domain can be both productive and non-productive depending on specific content
+
+You must choose ONLY ONE category. Avoid choosing "context-dependent" unless it's absolutely necessary.
+
+Return ONLY a JSON object with these fields:
+- category: one of the three categories above
+- reason: brief explanation for this categorization (1-2 sentences)
+${includePossibleCategories ? `- urlPatterns: for context-dependent domains only, a list of URL patterns that would indicate productive vs non-productive content` : ''}
+`;
+
+    // Make request to Gemini API
+    const result = await model.generateContent(prompt);
+    const response = result.response;
+    let responseText = response.text();
+
+    // Check if the response is valid JSON by removing markdown formatting if present
+    if (responseText.includes('```json')) {
+      responseText = responseText.split('```json')[1].split('```')[0].trim();
+    } else if (responseText.includes('```')) {
+      responseText = responseText.split('```')[1].split('```')[0].trim();
+    }
+
+    // Extract JSON 
+    const jsonMatch = responseText.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) {
+      throw new Error('Failed to parse JSON response from AI model');
+    }
+    
+    const analysis = JSON.parse(jsonMatch[0]);
+    
+    // Validate the response
+    if (!analysis.category || !['always-productive', 'always-nonproductive', 'context-dependent'].includes(analysis.category)) {
+      throw new Error('Invalid category in AI response');
+    }
+    
+    // Add timestamp for freshness tracking
+    analysis.timestamp = new Date().toISOString();
+    analysis.domain = domain;
+    
+    // Return the categorization with the same structure expected by the frontend
+    res.json({
+      success: true,
+      domain: domain,
+      categorization: analysis
+    });
+  } catch (error) {
+    console.error('Error categorizing domain:', error);
+    res.status(500).json({ success: false, error: 'Internal server error. Please try again later.' });
+  }
+});
+
+// Add YouTube content analysis endpoint
+app.post('/api/analyze-youtube', async (req, res) => {
+  try {
+    const { title, content, url, videoId, channelName, searchQuery, pageType } = req.body;
+    
+    if (!title || !url) {
+      return res.status(400).json({ success: false, error: 'Title and URL are required for YouTube analysis' });
+    }
+    
+    // Sanitize inputs
+    const cleanTitle = validator.escape(title || '');
+    const cleanContent = content || '';
+    
+    // Track token usage
+    const inputTokensEstimate = Math.ceil((cleanTitle.length + (cleanContent ? cleanContent.length : 0)) / 4);
+    
+    // Create prompt for Gemini with emphasis on educational vs entertainment content
+    const prompt = `
+Analyze this YouTube ${pageType || 'content'}: 
+
+${cleanContent}
+
+Return JSON with these fields:
+- isProductive (boolean): whether this content is educational/productive 
+- score (0-100): productivity score
+- categories (array): content categories
+- explanation (string): brief justification for the categorization
+- educationalPattern (boolean): whether this matches an educational content pattern
+
+Guidelines:
+1. Score EDUCATIONAL videos highly (tutorials, lectures, documentaries, how-to, university content)
+2. EDUCATIONAL SEARCHES are productive IF they are for tutorials, lessons, courses, how-to, university material
+3. ENTERTAINMENT videos and searches are not productive
+4. Look for indicators in title, channel name, and description
+5. Educational channels often have "academy," "learning," "education," "class," "course," "lecture," "tutorial," "guide," "how-to" in their name or video description
+
+Consider context of:
+- Video ID: ${videoId || 'N/A'}
+- Channel: ${channelName || 'Unknown'}
+- Search Query: ${searchQuery || 'N/A'}
+- Page Type: ${pageType || 'Unknown'}
+`;
+
+    // Make request to Gemini API
+    const result = await model.generateContent(prompt);
+    const response = result.response;
+    const responseText = response.text();
+    
+    // Estimate output tokens
+    const outputTokensEstimate = Math.ceil(responseText.length / 4);
+    
+    // Parse JSON response
+    let analysisResult;
+    try {
+      // Extract JSON from possibly markdown-formatted response
+      let jsonText = responseText;
+      
+      // Handle markdown code blocks if present
+      if (jsonText.includes('```json')) {
+        jsonText = jsonText.split('```json')[1].split('```')[0].trim();
+      } else if (jsonText.includes('```')) {
+        jsonText = jsonText.split('```')[1].split('```')[0].trim();
+      }
+      
+      // Find JSON object pattern in the response
+      const jsonMatch = jsonText.match(/\{[\s\S]*\}/);
+      if (!jsonMatch) {
+        throw new Error('No valid JSON found in response');
+      }
+      
+      analysisResult = JSON.parse(jsonMatch[0]);
+    } catch (jsonError) {
+      // If JSON parsing failed, create a default response
+      console.error('Error parsing YouTube analysis JSON:', jsonError);
+      
+      // Default to educational if title contains educational keywords
+      const lowerTitle = cleanTitle.toLowerCase();
+      const educationalPattern = 
+        lowerTitle.includes('tutorial') || 
+        lowerTitle.includes('how to') || 
+        lowerTitle.includes('learn') || 
+        lowerTitle.includes('course') || 
+        lowerTitle.includes('lecture') || 
+        lowerTitle.includes('education') ||
+        (channelName && channelName.toLowerCase().includes('academy'));
+        
+      analysisResult = {
+        isProductive: educationalPattern,
+        score: educationalPattern ? 75 : 25,
+        categories: educationalPattern ? ['Education'] : ['Entertainment'],
+        explanation: `Default classification based on keywords. ${educationalPattern ? 'Appears educational.' : 'Appears to be entertainment.'}`,
+        educationalPattern: educationalPattern
+      };
+    }
+    
+    // Normalize score to 0-100 range
+    if (typeof analysisResult.score === 'string') {
+      analysisResult.score = parseFloat(analysisResult.score);
+    }
+    
+    if (analysisResult.score <= 1 && analysisResult.score >= 0) {
+      analysisResult.score = Math.round(analysisResult.score * 100);
+    } else {
+      analysisResult.score = Math.min(100, Math.max(0, analysisResult.score));
+    }
+    
+    // Ensure all required fields exist
+    if (analysisResult.isProductive === undefined) {
+      analysisResult.isProductive = analysisResult.score >= 50;
+    }
+    
+    if (!analysisResult.categories || !Array.isArray(analysisResult.categories)) {
+      analysisResult.categories = analysisResult.isProductive ? ['Education'] : ['Entertainment'];
+    }
+    
+    if (!analysisResult.explanation) {
+      analysisResult.explanation = analysisResult.isProductive 
+        ? 'Educational YouTube content' 
+        : 'Entertainment YouTube content';
+    }
+    
+    // Add token usage data
+    analysisResult.tokenUsage = {
+      input: inputTokensEstimate,
+      output: outputTokensEstimate
+    };
+    
+    // Return the analysis result
+    res.json({
+      success: true,
+      ...analysisResult
+    });
+  } catch (error) {
+    console.error('Error analyzing YouTube content:', error);
+    res.status(500).json({ 
+      success: false, 
+      error: 'Internal server error. Please try again later.',
+      isProductive: false,
+      score: 0,
+      categories: ['Error'],
+      explanation: 'Error during YouTube content analysis'
+    });
+  }
+});
+
 // Start the server
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
