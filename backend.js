@@ -59,354 +59,603 @@ const userLimiter = rateLimit({
 });
 app.use('/api/', userLimiter);
 
-/**
- * Analyze a tab title to determine if it's productive content
- */
-async function analyzeTabTitle(title, url, domain) {
-  if (!title || title.trim() === '' || title === 'New Tab') {
-    return {
-      isProductive: false,
-      score: 0,
-      categories: [],
-      explanation: '',
-      domainCategory: 'unknown',
-      domainReason: 'Empty or new tab'
-    };
-  }
+// Backend API for BattleTask (ProductiveTime)
+// This simulates a backend service for the extension
 
-  try {
-    // Create prompt for Gemini with emphasis on domain categorization
-    const prompt = `
-Classify tab: "${title}" (URL: ${url}, Domain: ${domain})
+// Configuration
+const CONFIG = {
+  // API keys would normally be here
+  PRODUCTIVITY_THRESHOLD: 60, // Score threshold for productive vs non-productive
+  DOMAIN_CACHE_TIME: 7 * 24 * 60 * 60 * 1000, // 7 days in milliseconds
+  URL_CACHE_TIME: 24 * 60 * 60 * 1000 // 24 hours in milliseconds
+};
 
-Return JSON:
-- isProductive (bool)
-- score (0-100)
-- categories (array)
-- explanation (string)
-- domainCategory (string, must be one of: "always-productive", "always-nonproductive", "context-dependent")
-- domainReason (string)
+// In-memory cache for domain categorizations
+const domainCache = {};
 
-domainCategory explanation:
-- "always-productive": Domain is used exclusively for work/education (github, docs.google)
-- "always-nonproductive": Domain is exclusively for entertainment/social/shopping (netflix, instagram)
-- "context-dependent": Domain can be both productive and non-productive (youtube, reddit)
+// In-memory cache for URL analyses
+const urlCache = {};
 
-NOTE: Domain categorization is CRITICAL. Be decisive about domainCategory - avoid "context-dependent" unless truly necessary.
+// Domain categories
+const DOMAIN_CATEGORIES = {
+  'github.com': 'always-productive',
+  'gitlab.com': 'always-productive',
+  'stackoverflow.com': 'always-productive',
+  'docs.google.com': 'always-productive',
+  'drive.google.com': 'always-productive',
+  'sheets.google.com': 'always-productive',
+  'calendar.google.com': 'always-productive',
+  'linkedin.com': 'always-productive',
+  'coursera.org': 'always-productive',
+  'udemy.com': 'always-productive',
+  'edx.org': 'always-productive',
+  'khanacademy.org': 'always-productive',
+  'wikipedia.org': 'always-productive',
+  'medium.com': 'context-dependent',
+  'youtube.com': 'context-dependent',
+  'facebook.com': 'always-nonproductive',
+  'instagram.com': 'always-nonproductive',
+  'twitter.com': 'always-nonproductive',
+  'tiktok.com': 'always-nonproductive',
+  'reddit.com': 'context-dependent',
+  'netflix.com': 'always-nonproductive',
+  'hulu.com': 'always-nonproductive',
+  'amazon.com': 'context-dependent',
+  'ebay.com': 'always-nonproductive',
+  'twitch.tv': 'always-nonproductive'
+};
 
-Productive if:
-1. Educational content
-2. Professional development
-3. Work tools
-4. Research
-5. Productivity tools
-6. Email
-    `;
+// Context rules for context-dependent domains
+const CONTEXT_RULES = {
+  'youtube.com': [
+    { pattern: 'https://www.youtube.com/watch?v=*&list=PL*', isProductive: true, explanation: 'Educational playlist' },
+    { pattern: 'https://www.youtube.com/playlist?list=PL*', isProductive: true, explanation: 'Educational playlist' },
+    { pattern: 'https://www.youtube.com/c/*tutorials*', isProductive: true, explanation: 'Tutorial channel' },
+    { pattern: 'https://www.youtube.com/c/*education*', isProductive: true, explanation: 'Educational channel' },
+    { pattern: 'https://www.youtube.com/c/*learn*', isProductive: true, explanation: 'Educational channel' }
+  ],
+  'reddit.com': [
+    { pattern: 'https://www.reddit.com/r/programming*', isProductive: true, explanation: 'Programming subreddit' },
+    { pattern: 'https://www.reddit.com/r/learnprogramming*', isProductive: true, explanation: 'Programming learning subreddit' },
+    { pattern: 'https://www.reddit.com/r/cscareerquestions*', isProductive: true, explanation: 'Career development subreddit' },
+    { pattern: 'https://www.reddit.com/r/science*', isProductive: true, explanation: 'Science subreddit' }
+  ],
+  'medium.com': [
+    { pattern: 'https://medium.com/topic/programming*', isProductive: true, explanation: 'Programming articles' },
+    { pattern: 'https://medium.com/topic/technology*', isProductive: true, explanation: 'Technology articles' },
+    { pattern: 'https://medium.com/topic/data-science*', isProductive: true, explanation: 'Data science articles' }
+  ],
+  'amazon.com': [
+    { pattern: 'https://www.amazon.com/books*', isProductive: true, explanation: 'Book shopping' },
+    { pattern: 'https://www.amazon.com/*/books*', isProductive: true, explanation: 'Book shopping' },
+    { pattern: 'https://www.amazon.com/*/educational*', isProductive: true, explanation: 'Educational materials' }
+  ]
+};
 
-    // Make request to Gemini API
-    const result = await model.generateContent(prompt);
-    const response = result.response;
-    let responseText = response.text();
+// Productive keywords for content analysis
+const PRODUCTIVE_KEYWORDS = [
+  'learn', 'tutorial', 'education', 'course', 'programming',
+  'development', 'science', 'research', 'study', 'academic',
+  'professional', 'career', 'job', 'work', 'project',
+  'productivity', 'skill', 'knowledge', 'university', 'college'
+];
 
-    // Check if the response is valid JSON by removing markdown formatting if present
-    if (responseText.includes('```json')) {
-      responseText = responseText.split('```json')[1].split('```')[0].trim();
-    } else if (responseText.includes('```')) {
-      responseText = responseText.split('```')[1].split('```')[0].trim();
-    }
-
-    // Parse the JSON response
-    const analysis = JSON.parse(responseText);
-
-    // Ensure required fields exist
-    if (!analysis.isProductive) analysis.isProductive = false;
-    
-    // Handle score normalization
-    if (!analysis.score && analysis.score !== 0) analysis.score = 0;
-    
-    // Convert score to a number if it's a string
-    if (typeof analysis.score === 'string') {
-      analysis.score = parseFloat(analysis.score);
-    }
-    
-    // Normalize score to 0-100 range
-    if (analysis.score <= 1 && analysis.score >= 0) {
-      // If score is in 0-1 range (float), multiply by 100
-      analysis.score = Math.round(analysis.score * 100);
-    } else {
-      // Otherwise, cap it at 100
-      analysis.score = Math.min(100, Math.max(0, analysis.score));
-    }
-    
-    if (!analysis.categories) analysis.categories = [];
-    if (!analysis.explanation) analysis.explanation = '';
-    
-    // Strengthen domain categorization
-    if (!analysis.domainCategory || !['always-productive', 'always-nonproductive', 'context-dependent'].includes(analysis.domainCategory)) {
-      // Force a domainCategory based on score if missing
-      if (analysis.score >= 80) {
-        analysis.domainCategory = 'always-productive';
-        analysis.domainReason = 'High productivity score indicates this domain is primarily for productive activities';
-      } else if (analysis.score <= 20) {
-        analysis.domainCategory = 'always-nonproductive';
-        analysis.domainReason = 'Low productivity score indicates this domain is primarily for non-productive activities';
-      } else {
-        analysis.domainCategory = 'context-dependent';
-        analysis.domainReason = 'Domain contains mixed content that may be productive or non-productive depending on context';
-      }
-    }
-
-    // Attach original domain to response for reference
-    analysis.domain = domain;
-
-    return analysis;
-  } catch (error) {
-    console.error('Error analyzing title:', error);
-    return {
-      isProductive: false,
-      score: 0,
-      categories: [],
-      explanation: 'Error during analysis',
-      domainCategory: 'context-dependent',
-      domainReason: 'Unable to categorize domain due to analysis error',
-      domain: domain
-    };
-  }
-}
-
-// Analyze content directly from the frontend or browser extension
-app.post('/api/analyze-content', async (req, res) => {
-  try {
-    const { title, url, content } = req.body;
-    
-    if (!title || !content) {
-      return res.status(400).json({ success: false, error: 'Title and content are required' });
-    }
-    
-    // Sanitize inputs
-    const cleanTitle = validator.escape(title);
-    
-    // Extract domain
-    const domain = url ? extractDomain(url) : '';
-    
-    // Analyze the content for productive status
-    const analysis = await analyzeContent(cleanTitle, content, url || '', domain);
-    
-    res.json({
-      success: true,
-      ...analysis
-    });
-  } catch (error) {
-    console.error('Error analyzing content:', error);
-    res.status(500).json({ success: false, error: 'Internal server error. Please try again later.' });
-  }
-});
+// Non-productive keywords for content analysis
+const NONPRODUCTIVE_KEYWORDS = [
+  'game', 'play', 'entertainment', 'funny', 'meme',
+  'viral', 'celebrity', 'gossip', 'trending', 'shopping',
+  'sale', 'discount', 'deal', 'stream', 'watch',
+  'movie', 'series', 'episode', 'season', 'trailer'
+];
 
 /**
- * Analyze content to determine if it's productive
- * @param {string} title - The title of the page
- * @param {string} content - The content to analyze
- * @param {string} url - The URL of the page
- * @param {string} domain - The domain of the page
- * @returns {Object} Analysis result
+ * Handle domain categorization request
+ * @param {Object} request - The request object with domain
+ * @returns {Object} - Response with categorization
  */
-async function analyzeContent(title, content, url = '', domain = '') {
+function handleDomainCategorization(request) {
   try {
-    if (!title || !content) {
-      console.error("Missing title or content for analysis");
+    const domain = request.domain.toLowerCase();
+    
+    // Check cache first
+    if (domainCache[domain] && domainCache[domain].timestamp > Date.now() - CONFIG.DOMAIN_CACHE_TIME) {
       return {
-        isProductive: false,
-        score: 0,
-        categories: [],
-        explanation: "Unable to analyze: Missing title or content",
-        domainCategory: "unknown",
-        domainReason: "Insufficient data for domain categorization",
-        domain: domain
+        success: true,
+        categorization: domainCache[domain].data
       };
     }
-
-    // Limit content length to avoid token limits
-    const truncatedContent = content.substring(0, 2000);
     
-    // Create prompt for the model with emphasis on domain categorization
-    const prompt = `
-Analyze: "${title}" (URL: ${url}, Domain: ${domain})
-
-Content snippet:
-"""
-${truncatedContent}
-"""
-
-Return JSON:
-- isProductive (bool)
-- score (0-1)
-- categories (array)
-- explanation (string)
-- domainCategory (string, must be one of: "always-productive", "always-nonproductive", "context-dependent")
-- domainReason (string)
-
-domainCategory explanation:
-- "always-productive": Domain is used exclusively for work/education (github, docs.google)
-- "always-nonproductive": Domain is exclusively for entertainment/social/shopping (netflix, instagram)
-- "context-dependent": Domain can be both productive and non-productive (youtube, reddit)
-
-NOTE: Domain categorization is CRITICAL. Be decisive about domainCategory - avoid "context-dependent" unless truly necessary.
-    `;
-
-    // Call the Gemini API
-    const result = await model.generateContent(prompt);
-
-    try {
-      const responseText = result.response.text();
-      // Extract JSON from the response
-      const jsonMatch = responseText.match(/\{[\s\S]*\}/);
+    // Check predefined categories
+    if (DOMAIN_CATEGORIES[domain]) {
+      const category = DOMAIN_CATEGORIES[domain];
+      let urlPatterns = [];
       
-      if (jsonMatch) {
-        const analysisResult = JSON.parse(jsonMatch[0]);
-        
-        // Normalize the score to 0-100 range if it's in 0-1
-        let score = analysisResult.score || 0;
-        if (score <= 1 && score >= 0) {
-          score = Math.round(score * 100);
-        } else {
-          score = Math.min(100, Math.max(0, score));
-        }
-        
-        const result = {
-          isProductive: analysisResult.isProductive || false,
-          score: score,
-          categories: analysisResult.categories || [],
-          explanation: analysisResult.explanation || "No explanation provided",
-          domainCategory: analysisResult.domainCategory || "unknown",
-          domainReason: analysisResult.domainReason || "No domain categorization reason provided",
-          domain: domain
-        };
-        
-        // Strengthen domain categorization if missing or invalid
-        if (!result.domainCategory || !['always-productive', 'always-nonproductive', 'context-dependent'].includes(result.domainCategory)) {
-          // Force a domainCategory based on score if missing
-          if (result.score >= 80) {
-            result.domainCategory = 'always-productive';
-            result.domainReason = 'High productivity score based on content analysis indicates this domain is primarily for productive activities';
-          } else if (result.score <= 20) {
-            result.domainCategory = 'always-nonproductive';
-            result.domainReason = 'Low productivity score based on content analysis indicates this domain is primarily for non-productive activities';
-          } else {
-            result.domainCategory = 'context-dependent';
-            result.domainReason = 'Content analysis shows this domain contains mixed content that may be productive or non-productive depending on context';
-          }
-        }
-        
-        return result;
-      } else {
-        throw new Error("Failed to extract JSON from API response");
+      // Include URL patterns for context-dependent domains
+      if (category === 'context-dependent' && CONTEXT_RULES[domain]) {
+        urlPatterns = CONTEXT_RULES[domain].map(rule => ({
+          pattern: rule.pattern,
+          isProductive: rule.isProductive
+        }));
       }
-    } catch (parseError) {
-      console.error("Error parsing content analysis result:", parseError);
-      // Fall back to title-only analysis
-      return await analyzeTabTitle(title, url, domain);
+      
+      const result = {
+        domain: domain,
+        category: category,
+        confidence: 0.95,
+        urlPatterns: urlPatterns
+      };
+      
+      // Cache the result
+      domainCache[domain] = {
+        timestamp: Date.now(),
+        data: result
+      };
+      
+      return {
+        success: true,
+        categorization: result
+      };
     }
+    
+    // For domains not in our predefined list, analyze the domain name
+    const domainParts = domain.split('.');
+    const domainName = domainParts[0];
+    
+    // Analyze domain name for productivity indicators
+    let category = 'context-dependent';
+    let confidence = 0.6;
+    
+    // Check for educational domains
+    if (domain.endsWith('.edu') || domain.endsWith('.ac.uk') || domain.endsWith('.edu.au')) {
+      category = 'always-productive';
+      confidence = 0.9;
+    }
+    // Check for known productive domain patterns
+    else if (domainName.includes('learn') || domainName.includes('edu') || 
+             domainName.includes('course') || domainName.includes('study') ||
+             domainName.includes('academic') || domainName.includes('research') ||
+             domainName.includes('science') || domainName.includes('dev')) {
+      category = 'always-productive';
+      confidence = 0.8;
+    }
+    // Check for known non-productive domain patterns
+    else if (domainName.includes('game') || domainName.includes('play') || 
+             domainName.includes('fun') || domainName.includes('entertainment') ||
+             domainName.includes('meme') || domainName.includes('shop') ||
+             domainName.includes('store') || domainName.includes('buy')) {
+      category = 'always-nonproductive';
+      confidence = 0.8;
+    }
+    
+    const result = {
+      domain: domain,
+      category: category,
+      confidence: confidence
+    };
+    
+    // Cache the result
+    domainCache[domain] = {
+      timestamp: Date.now(),
+      data: result
+    };
+    
+    return {
+      success: true,
+      categorization: result
+    };
+    
   } catch (error) {
-    console.error("Error in content analysis:", error);
-    // Fall back to title-only analysis as a backup
-    return await analyzeTabTitle(title, url, domain);
+    console.error('Error in handleDomainCategorization:', error);
+    return {
+      success: false,
+      error: 'Failed to categorize domain'
+    };
   }
 }
 
-// API Routes
-
-// Health check endpoint
-app.get('/', (req, res) => {
-  res.json({
-    status: 'ok',
-    message: 'BattleTask API is running',
-    apiKeyConfigured: !!GEMINI_API_KEY,
-    timestamp: new Date().toISOString()
-  });
-});
-
-// Save tab data and analyze productive content
-app.post('/api/tabs', async (req, res) => {
+/**
+ * Handle URL content analysis request
+ * @param {Object} request - The request with URL, title, and content
+ * @returns {Object} - Response with analysis
+ */
+function handleContentAnalysis(request) {
   try {
-    const { windowId, tab } = req.body;
-
-    if (!tab || !tab.title || !tab.id || !tab.url) {
-      return res.status(400).json({ success: false, error: 'Tab data is required' });
-    }
-    // Validate URL
-    if (!validator.isURL(tab.url, { require_protocol: true })) {
-      return res.status(400).json({ success: false, error: 'Invalid URL' });
-    }
-    // Sanitize title
-    const cleanTitle = validator.escape(tab.title);
+    const url = request.url;
+    const title = request.title || '';
+    const content = request.content || '';
+    const domain = extractDomain(url);
     
-    // Extract domain
-    const domain = extractDomain(tab.url);
-
-    // Analyze the tab title for productive content
-    const analysis = await analyzeTabTitle(cleanTitle, tab.url, domain);
+    // Check cache first
+    if (urlCache[url] && urlCache[url].timestamp > Date.now() - CONFIG.URL_CACHE_TIME) {
+      return {
+        success: true,
+        analysis: urlCache[url].data
+      };
+    }
     
-    res.json({ 
-      success: true, 
-      id: tab.id, 
-      analysis: {
-        isProductive: analysis.isProductive,
-        score: analysis.score,
-        categories: analysis.categories,
-        explanation: analysis.explanation,
-        domainCategory: analysis.domainCategory,
-        domainReason: analysis.domainReason
+    // Get domain categorization first
+    const domainCategorization = DOMAIN_CATEGORIES[domain];
+    
+    // If domain is always productive or non-productive, use that
+    if (domainCategorization === 'always-productive') {
+      const result = {
+        isProductive: true,
+        score: 100,
+        categories: ['Work Tool'],
+        explanation: 'Domain is categorized as always productive',
+        domainCategory: 'always-productive'
+      };
+      
+      // Cache the result
+      urlCache[url] = {
+        timestamp: Date.now(),
+        data: result
+      };
+      
+      return {
+        success: true,
+        analysis: result
+      };
+    }
+    
+    if (domainCategorization === 'always-nonproductive') {
+      const result = {
+        isProductive: false,
+        score: 0,
+        categories: ['Entertainment'],
+        explanation: 'Domain is categorized as always non-productive',
+        domainCategory: 'always-nonproductive'
+      };
+      
+      // Cache the result
+      urlCache[url] = {
+        timestamp: Date.now(),
+        data: result
+      };
+      
+      return {
+        success: true,
+        analysis: result
+      };
+    }
+    
+    // For context-dependent domains, check URL patterns
+    if (domainCategorization === 'context-dependent' && CONTEXT_RULES[domain]) {
+      for (const rule of CONTEXT_RULES[domain]) {
+        // Convert wildcard pattern to regex
+        const pattern = rule.pattern.replace(/\*/g, '.*');
+        const regex = new RegExp(`^${pattern}$`);
+        
+        if (regex.test(url)) {
+          const result = {
+            isProductive: rule.isProductive,
+            score: rule.isProductive ? 100 : 0,
+            categories: rule.isProductive ? ['Work'] : ['Entertainment'],
+            explanation: rule.explanation || (rule.isProductive ? 'URL matches productive pattern' : 'URL matches non-productive pattern'),
+            domainCategory: 'context-dependent',
+            matchedPattern: rule.pattern
+          };
+          
+          // Cache the result
+          urlCache[url] = {
+            timestamp: Date.now(),
+            data: result
+          };
+          
+          return {
+            success: true,
+            analysis: result
+          };
+        }
+      }
+    }
+    
+    // Analyze content if no pattern match
+    // Combine title and content for analysis
+    const combinedText = (title + ' ' + content).toLowerCase();
+    
+    // Count productive and non-productive keywords
+    let productiveScore = 0;
+    let nonProductiveScore = 0;
+    
+    PRODUCTIVE_KEYWORDS.forEach(keyword => {
+      if (combinedText.includes(keyword)) {
+        productiveScore += 1;
       }
     });
-  } catch (error) {
-    console.error('Error processing tab data:', error);
-    res.status(500).json({ success: false, error: 'Internal server error. Please try again later.' });
-  }
-});
-
-// Analyze a title directly from the frontend
-app.post('/api/analyze-title', async (req, res) => {
-  try {
-    const { title, url, domain } = req.body;
     
-    if (!title) {
-      return res.status(400).json({ success: false, error: 'Title is required' });
-    }
-    // Sanitize title
-    const cleanTitle = validator.escape(title);
-    
-    // Use the provided domain or extract it from URL
-    const extractedDomain = domain || (url ? extractDomain(url) : '');
-    
-    const analysis = await analyzeTabTitle(cleanTitle, url || '', extractedDomain);
-    
-    res.json({
-      success: true,
-      ...analysis
+    NONPRODUCTIVE_KEYWORDS.forEach(keyword => {
+      if (combinedText.includes(keyword)) {
+        nonProductiveScore += 1;
+      }
     });
+    
+    // Calculate normalized score (0-100)
+    const totalKeywords = PRODUCTIVE_KEYWORDS.length + NONPRODUCTIVE_KEYWORDS.length;
+    const normalizedScore = Math.min(100, Math.max(0, 
+      50 + ((productiveScore / PRODUCTIVE_KEYWORDS.length) - (nonProductiveScore / NONPRODUCTIVE_KEYWORDS.length)) * 50
+    ));
+    
+    // Determine categories
+    const categories = [];
+    if (normalizedScore >= CONFIG.PRODUCTIVITY_THRESHOLD) {
+      if (combinedText.includes('programming') || combinedText.includes('coding')) {
+        categories.push('Programming');
+      }
+      if (combinedText.includes('learn') || combinedText.includes('education')) {
+        categories.push('Learning');
+      }
+      if (combinedText.includes('work') || combinedText.includes('job')) {
+        categories.push('Work');
+      }
+      if (categories.length === 0) {
+        categories.push('Productive');
+      }
+    } else {
+      if (combinedText.includes('game') || combinedText.includes('play')) {
+        categories.push('Gaming');
+      }
+      if (combinedText.includes('video') || combinedText.includes('watch')) {
+        categories.push('Video');
+      }
+      if (combinedText.includes('shop') || combinedText.includes('buy')) {
+        categories.push('Shopping');
+      }
+      if (categories.length === 0) {
+        categories.push('Entertainment');
+      }
+    }
+    
+    // Generate explanation
+    let explanation = '';
+    if (normalizedScore >= CONFIG.PRODUCTIVITY_THRESHOLD) {
+      explanation = `Content analysis indicates productive content (score: ${Math.round(normalizedScore)}). `;
+      if (productiveScore > 0) {
+        explanation += `Found ${productiveScore} productivity indicators.`;
+      }
+    } else {
+      explanation = `Content analysis indicates non-productive content (score: ${Math.round(normalizedScore)}). `;
+      if (nonProductiveScore > 0) {
+        explanation += `Found ${nonProductiveScore} entertainment indicators.`;
+      }
+    }
+    
+    const result = {
+      isProductive: normalizedScore >= CONFIG.PRODUCTIVITY_THRESHOLD,
+      score: Math.round(normalizedScore),
+      categories: categories,
+      explanation: explanation,
+      domainCategory: domainCategorization || 'unknown'
+    };
+    
+    // Cache the result
+    urlCache[url] = {
+      timestamp: Date.now(),
+      data: result
+    };
+    
+    return {
+      success: true,
+      analysis: result
+    };
+    
   } catch (error) {
-    console.error('Error analyzing title:', error);
-    res.status(500).json({ success: false, error: 'Internal server error. Please try again later.' });
+    console.error('Error in handleContentAnalysis:', error);
+    return {
+      success: false,
+      error: 'Failed to analyze content'
+    };
   }
-});
+}
 
 /**
- * Extract domain from a URL
- * @param {string} url - The URL to extract domain from
- * @returns {string} The extracted domain
+ * Handle title-only analysis request
+ * @param {Object} request - The request with URL and title
+ * @returns {Object} - Response with analysis
+ */
+function handleTitleAnalysis(request) {
+  try {
+    const url = request.url;
+    const title = request.title || '';
+    const domain = request.domain || extractDomain(url);
+    
+    // Check cache first
+    if (urlCache[url] && urlCache[url].timestamp > Date.now() - CONFIG.URL_CACHE_TIME) {
+      return {
+        success: true,
+        analysis: urlCache[url].data
+      };
+    }
+    
+    // Get domain categorization first
+    const domainCategorization = DOMAIN_CATEGORIES[domain];
+    
+    // If domain is always productive or non-productive, use that
+    if (domainCategorization === 'always-productive') {
+      const result = {
+        isProductive: true,
+        score: 100,
+        categories: ['Work Tool'],
+        explanation: 'Domain is categorized as always productive',
+        domainCategory: 'always-productive'
+      };
+      
+      // Cache the result
+      urlCache[url] = {
+        timestamp: Date.now(),
+        data: result
+      };
+      
+      return {
+        success: true,
+        analysis: result
+      };
+    }
+    
+    if (domainCategorization === 'always-nonproductive') {
+      const result = {
+        isProductive: false,
+        score: 0,
+        categories: ['Entertainment'],
+        explanation: 'Domain is categorized as always non-productive',
+        domainCategory: 'always-nonproductive'
+      };
+      
+      // Cache the result
+      urlCache[url] = {
+        timestamp: Date.now(),
+        data: result
+      };
+      
+      return {
+        success: true,
+        analysis: result
+      };
+    }
+    
+    // For context-dependent domains, check URL patterns
+    if (domainCategorization === 'context-dependent' && CONTEXT_RULES[domain]) {
+      for (const rule of CONTEXT_RULES[domain]) {
+        // Convert wildcard pattern to regex
+        const pattern = rule.pattern.replace(/\*/g, '.*');
+        const regex = new RegExp(`^${pattern}$`);
+        
+        if (regex.test(url)) {
+          const result = {
+            isProductive: rule.isProductive,
+            score: rule.isProductive ? 100 : 0,
+            categories: rule.isProductive ? ['Work'] : ['Entertainment'],
+            explanation: rule.explanation || (rule.isProductive ? 'URL matches productive pattern' : 'URL matches non-productive pattern'),
+            domainCategory: 'context-dependent',
+            matchedPattern: rule.pattern
+          };
+          
+          // Cache the result
+          urlCache[url] = {
+            timestamp: Date.now(),
+            data: result
+          };
+          
+          return {
+            success: true,
+            analysis: result
+          };
+        }
+      }
+    }
+    
+    // Analyze title if no pattern match
+    const titleLower = title.toLowerCase();
+    
+    // Count productive and non-productive keywords
+    let productiveScore = 0;
+    let nonProductiveScore = 0;
+    
+    PRODUCTIVE_KEYWORDS.forEach(keyword => {
+      if (titleLower.includes(keyword)) {
+        productiveScore += 1;
+      }
+    });
+    
+    NONPRODUCTIVE_KEYWORDS.forEach(keyword => {
+      if (titleLower.includes(keyword)) {
+        nonProductiveScore += 1;
+      }
+    });
+    
+    // Calculate normalized score (0-100)
+    let normalizedScore = 50; // Default to neutral
+    
+    if (productiveScore > 0 || nonProductiveScore > 0) {
+      normalizedScore = Math.min(100, Math.max(0, 
+        50 + ((productiveScore / PRODUCTIVE_KEYWORDS.length) - (nonProductiveScore / NONPRODUCTIVE_KEYWORDS.length)) * 50
+      ));
+    }
+    
+    // Determine categories
+    const categories = [];
+    if (normalizedScore >= CONFIG.PRODUCTIVITY_THRESHOLD) {
+      if (titleLower.includes('programming') || titleLower.includes('coding')) {
+        categories.push('Programming');
+      }
+      if (titleLower.includes('learn') || titleLower.includes('education')) {
+        categories.push('Learning');
+      }
+      if (titleLower.includes('work') || titleLower.includes('job')) {
+        categories.push('Work');
+      }
+      if (categories.length === 0) {
+        categories.push('Productive');
+      }
+    } else {
+      if (titleLower.includes('game') || titleLower.includes('play')) {
+        categories.push('Gaming');
+      }
+      if (titleLower.includes('video') || titleLower.includes('watch')) {
+        categories.push('Video');
+      }
+      if (titleLower.includes('shop') || titleLower.includes('buy')) {
+        categories.push('Shopping');
+      }
+      if (categories.length === 0) {
+        categories.push('Entertainment');
+      }
+    }
+    
+    // Generate explanation
+    let explanation = '';
+    if (normalizedScore >= CONFIG.PRODUCTIVITY_THRESHOLD) {
+      explanation = `Title analysis indicates productive content (score: ${Math.round(normalizedScore)}). `;
+      if (productiveScore > 0) {
+        explanation += `Found ${productiveScore} productivity indicators.`;
+      }
+    } else {
+      explanation = `Title analysis indicates non-productive content (score: ${Math.round(normalizedScore)}). `;
+      if (nonProductiveScore > 0) {
+        explanation += `Found ${nonProductiveScore} entertainment indicators.`;
+      }
+    }
+    
+    const result = {
+      isProductive: normalizedScore >= CONFIG.PRODUCTIVITY_THRESHOLD,
+      score: Math.round(normalizedScore),
+      categories: categories,
+      explanation: explanation,
+      domainCategory: domainCategorization || 'unknown'
+    };
+    
+    // Cache the result
+    urlCache[url] = {
+      timestamp: Date.now(),
+      data: result
+    };
+    
+    return {
+      success: true,
+      analysis: result
+    };
+    
+  } catch (error) {
+    console.error('Error in handleTitleAnalysis:', error);
+    return {
+      success: false,
+      error: 'Failed to analyze title'
+    };
+  }
+}
+
+/**
+ * Extract domain from URL
+ * @param {string} url - The URL
+ * @returns {string} - The extracted domain
  */
 function extractDomain(url) {
   try {
     if (!url) return '';
     
-    // Remove protocol and get the hostname
-    let domain = url.replace(/(https?:\/\/)?(www\.)?/i, '');
-    
-    // Remove path and query string
-    domain = domain.split('/')[0];
-    
-    // Remove port if present
-    domain = domain.split(':')[0];
+    // Remove protocol and get hostname
+    let domain = url.replace(/^(https?:\/\/)?(www\.)?/, '');
+    domain = domain.split('/')[0].split('?')[0];
     
     return domain;
   } catch (error) {
@@ -415,72 +664,14 @@ function extractDomain(url) {
   }
 }
 
-// Add a domain categorization API endpoint
-app.post('/api/domain-category', async (req, res) => {
-  try {
-    const { domain } = req.body;
-    
-    if (!domain) {
-      return res.status(400).json({ success: false, error: 'Domain parameter is required' });
-    }
-    
-    // Create a special prompt specifically for domain categorization
-    const prompt = `
-Categorize this domain: "${domain}"
-
-Your task is to categorize this domain into one of three categories:
-1. "always-productive": Domain is used exclusively for work, education, or productivity tools
-2. "always-nonproductive": Domain is used exclusively for entertainment, social media, or shopping
-3. "context-dependent": Domain can be both productive and non-productive depending on specific content
-
-You must choose ONLY ONE category. Avoid choosing "context-dependent" unless it's absolutely necessary.
-
-Return ONLY a JSON object with these fields:
-- category: one of the three categories above
-- reason: brief explanation for this categorization (1-2 sentences)
-- urlPatterns: for context-dependent domains only, a list of URL patterns that would indicate productive vs non-productive content
-`;
-
-    // Make request to Gemini API
-    const result = await model.generateContent(prompt);
-    const response = result.response;
-    let responseText = response.text();
-
-    // Check if the response is valid JSON by removing markdown formatting if present
-    if (responseText.includes('```json')) {
-      responseText = responseText.split('```json')[1].split('```')[0].trim();
-    } else if (responseText.includes('```')) {
-      responseText = responseText.split('```')[1].split('```')[0].trim();
-    }
-
-    // Extract JSON 
-    const jsonMatch = responseText.match(/\{[\s\S]*\}/);
-    if (!jsonMatch) {
-      throw new Error('Failed to parse JSON response from AI model');
-    }
-    
-    const analysis = JSON.parse(jsonMatch[0]);
-    
-    // Validate the response
-    if (!analysis.category || !['always-productive', 'always-nonproductive', 'context-dependent'].includes(analysis.category)) {
-      throw new Error('Invalid category in AI response');
-    }
-    
-    // Add timestamp for freshness tracking
-    analysis.timestamp = new Date().toISOString();
-    analysis.domain = domain;
-    
-    // Return the categorization
-    res.json({
-      success: true,
-      domain: domain,
-      categorization: analysis
-    });
-  } catch (error) {
-    console.error('Error categorizing domain:', error);
-    res.status(500).json({ success: false, error: 'Internal server error. Please try again later.' });
-  }
-});
+// Export functions for use in extension
+if (typeof module !== 'undefined' && module.exports) {
+  module.exports = {
+    handleDomainCategorization,
+    handleContentAnalysis,
+    handleTitleAnalysis
+  };
+}
 
 // Start the server
 app.listen(PORT, () => {
