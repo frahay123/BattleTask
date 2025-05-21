@@ -118,8 +118,6 @@ const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
 const domainCategoryCache = new Map();
 // Cache expiration time: 7 days (in milliseconds)
 const CACHE_EXPIRATION = 7 * 24 * 60 * 60 * 1000;
-// Cache expiration for error or forced context-dependent results: 1 day
-const ERROR_CACHE_EXPIRATION = 24 * 60 * 60 * 1000;
 
 // Middleware
 app.use(cors());
@@ -147,44 +145,6 @@ const userLimiter = rateLimit({
 });
 app.use('/api/', userLimiter);
 
-// Clear any cached classification for potentially problematic domains
-// This prevents incorrect classifications from persisting
-console.log('Clearing frequently used mixed-content domains from cache on startup');
-const domainsToReset = [
-  // Most common problematic domains that should always be context-dependent
-  'youtube.com', 'youtu.be', 'reddit.com', 'twitter.com', 'x.com', 
-  'facebook.com', 'linkedin.com', 'instagram.com', 'tiktok.com',
-  'amazon.com', 'netflix.com', 'google.com', 'github.com', 'stackoverflow.com',
-  'wikipedia.org', 'medium.com', 'quora.com', 'spotify.com', 'ted.com',
-  
-  // Email clients that should be always productive
-  'gmail.com', 'mail.google.com', 'outlook.com', 'outlook.office.com',
-  'mail.yahoo.com', 'protonmail.com', 'mail.proton.me', 'fastmail.com',
-  'hotmail.com', 'yahoo.com'
-];
-
-// Count how many domains were reset
-let resetCount = 0;
-domainsToReset.forEach(domain => {
-  if (domainCategoryCache.has(domain)) {
-    console.log(`Removing ${domain} from domain classification cache`);
-    domainCategoryCache.delete(domain);
-    resetCount++;
-  }
-});
-
-console.log(`Reset ${resetCount} domains in cache at startup`);
-
-// Clear the entire cache once per day if server stays running
-// This helps ensure we don't keep stale classifications
-setInterval(() => {
-  const cacheSize = domainCategoryCache.size;
-  if (cacheSize > 0) {
-    console.log(`Clearing entire domain classification cache (${cacheSize} entries)`);
-    domainCategoryCache.clear();
-  }
-}, 24 * 60 * 60 * 1000); // 24 hours
-
 /**
  * Get domain categorization - either from cache or by calling the API
  * @param {string} domain - The domain to categorize
@@ -192,7 +152,6 @@ setInterval(() => {
  */
 async function getDomainCategory(domain) {
   if (!domain) {
-    console.log('getDomainCategory called with empty domain');
     return {
       category: 'unknown',
       reason: 'No domain provided'
@@ -202,208 +161,28 @@ async function getDomainCategory(domain) {
   // Check cache first
   if (domainCategoryCache.has(domain)) {
     const cachedResult = domainCategoryCache.get(domain);
-    
-    // Use different expiration times for different types of cached results
-    const expirationTime = (cachedResult.forcedClassification || 
-                          cachedResult.reason?.includes('Error during domain categorization')) 
-                          ? ERROR_CACHE_EXPIRATION : CACHE_EXPIRATION;
-    
     // If cache entry is still valid (not expired)
-    if (Date.now() - cachedResult.timestamp < expirationTime) {
-      console.log(`Domain ${domain} categorization found in cache: ${cachedResult.category}`);
-      console.log(`Cache type: ${cachedResult.forcedClassification ? 'forced' : 
-                 (cachedResult.reason?.includes('Error') ? 'error' : 'normal')}`);
+    if (Date.now() - cachedResult.timestamp < CACHE_EXPIRATION) {
       return cachedResult;
-    } else {
-      console.log(`Domain ${domain} found in cache but expired, will recategorize`);
-      console.log(`Cache expired after ${Math.round((Date.now() - cachedResult.timestamp) / (1000 * 60 * 60))} hours`);
     }
-  } else {
-    console.log(`Domain ${domain} not in cache, will categorize via API`);
   }
   
   try {
-    console.log(`Generating domain categorization for ${domain} using Gemini API`);
-    
-    // Create a compact prompt for domain categorization to minimize token usage
-    // Check if this is a known mixed-content domain that should always be context-dependent
-    // Helper function to check if a domain is always productive
-    function isAlwaysProductiveDomain(domainToCheck) {
-      // Direct match
-      if (alwaysProductiveDomains.includes(domainToCheck)) {
-        return true;
-      }
-      
-      // Check for subdomains of always productive domains
-      for (const prodDomain of alwaysProductiveDomains) {
-        if (domainToCheck.endsWith(`.${prodDomain}`)) {
-          return true;
-        }
-      }
-      
-      return false;
-    }
-    
-    // These domains contain truly mixed content that needs to be analyzed per-page
-    const knownMixedContentDomains = [
-      // Video platforms with truly mixed content
-      'youtube.com', 'youtu.be', 'vimeo.com', 'dailymotion.com', 'twitch.tv',
-      'nebula.tv', 'curiositystream.com', 'ted.com',
-      
-      // Social media and discussion platforms
-      'reddit.com', 'twitter.com', 'x.com', 'facebook.com',
-      'instagram.com', 'pinterest.com', 'tumblr.com', 'mastodon.social',
-      'tiktok.com', 'discord.com', 'quora.com', 'medium.com', 'substack.com',
-      'hackernews.com', 'news.ycombinator.com', 'discourse.org',
-      
-      // News and media
-      'nytimes.com', 'wsj.com', 'washingtonpost.com', 'ft.com', 'economist.com',
-      'cnn.com', 'foxnews.com', 'bbc.com', 'bbc.co.uk', 'reuters.com', 
-      'apnews.com', 'bloomberg.com', 'cnbc.com', 'forbes.com', 'businessinsider.com',
-      'theguardian.com', 'independent.co.uk', 'aljazeera.com', 'time.com',
-      'newsweek.com', 'theatlantic.com', 'newyorker.com', 'wired.com',
-      'techcrunch.com', 'arstechnica.com', 'engadget.com', 'theverge.com',
-      'news.yahoo.com', 'news.google.com', 'msn.com', 'cnet.com', 'zdnet.com',
-      
-      // Content aggregators
-      'flipboard.com', 'feedly.com', 'pocket.co', 'getpocket.com', 'instapaper.com',
-      'digg.com', 'slashdot.org', 'metafilter.com', 'producthunt.com',
-      
-      // Wikipedia (depends on the article)
-      'wikipedia.org',
-      
-      // Streaming and entertainment (could include educational content)
-      'netflix.com', 'hulu.com', 'disneyplus.com', 'primevideo.com', 'hbomax.com',
-      'peacocktv.com', 'paramountplus.com', 'discoveryplus.com', 'appletv.apple.com',
-      
-      // E-commerce and marketplaces (could be productive or unproductive)
-      'amazon.com', 'ebay.com', 'etsy.com', 'walmart.com', 'target.com',
-      'bestbuy.com', 'newegg.com', 'alibaba.com', 'aliexpress.com',
-      'homedepot.com', 'lowes.com', 'ikea.com', 'wayfair.com',
-      
-      // General search and browsing
-      'google.com', 'bing.com', 'yahoo.com', 'duckduckgo.com', 'baidu.com',
-      
-      // Audio platforms with mixed content
-      'spotify.com', 'podcasts.apple.com', 'soundcloud.com', 'audible.com',
-      'iheart.com', 'pandora.com', 'tunein.com', 'stitcher.com',
-      
-      // Creative and hobby platforms
-      'behance.net', 'dribbble.com', 'deviantart.com', 'flickr.com',
-      'unsplash.com', 'pexels.com', 'pixabay.com', 'instructables.com',
-      'ravelry.com', 'allrecipes.com', 'epicurious.com', 'foodnetwork.com',
-      
-      // Other popular mixed-content sites
-      'goodreads.com', 'imdb.com', 'rottentomatoes.com', 'metacritic.com',
-      'webmd.com', 'mayoclinic.org', 'healthline.com', 'medlineplus.gov',
-      'zillow.com', 'redfin.com', 'realtor.com', 'tripadvisor.com', 'expedia.com',
-      'booking.com', 'airbnb.com', 'maps.google.com'
-    ];
-    
-    // List of email clients that should always be marked as productive
-    const emailDomains = [
-      'gmail.com', 'mail.google.com', 'outlook.com', 'outlook.office.com', 'outlook.live.com',
-      'mail.yahoo.com', 'yahoo.mail.com', 'mail.proton.me', 'protonmail.com', 'aol.com',
-      'mail.aol.com', 'zoho.com', 'mail.zoho.com', 'icloud.com', 'mail.icloud.com',
-      'mail.com', 'fastmail.com', 'mail.ru', 'yandex.mail.ru', 'tutanota.com',
-      'hey.com', 'hotmail.com', 'live.com', 'mail.sina.com', 'mail.qq.com',
-      'gmx.com', 'gmx.net', 'web.de', 'mail.163.com', 'mail.126.com',
-      'mail.yandex.com', 'yandex.com'
-    ];
-    
-    // Helper function to check if a domain is an email client
-    function isEmailClient(domainToCheck) {
-      // Direct match
-      if (emailDomains.includes(domainToCheck)) {
-        return true;
-      }
-      
-      // Check for subdomains of email services
-      for (const emailDomain of emailDomains) {
-        if (domainToCheck.endsWith(`.${emailDomain}`)) {
-          return true;
-        }
-      }
-      
-      // Check for common email client patterns
-      if (domainToCheck.includes('mail.') || 
-          domainToCheck.includes('email.') || 
-          domainToCheck.includes('webmail.') || 
-          domainToCheck.includes('outlook.') ||
-          domainToCheck.match(/mail\d*\.[a-z]+\.[a-z]+$/)) {
-        return true;
-      }
-      
-      return false;
-    }
-    
-    // Helper function to check if a domain matches any in our mixed-content list
-    function isMixedContentDomain(domainToCheck) {
-      // Direct match
-      if (knownMixedContentDomains.includes(domainToCheck)) {
-        return true;
-      }
-      
-      // Check for subdomains (e.g., sub.example.com matches example.com)
-      for (const knownDomain of knownMixedContentDomains) {
-        if (domainToCheck.endsWith(`.${knownDomain}`)) {
-          return true;
-        }
-        
-        // Special case for country-specific domains (e.g., amazon.co.uk should match amazon.com)
-        const baseDomain = knownDomain.split('.')[0];
-        if (baseDomain.length > 3 && !baseDomain.includes('/') && 
-            domainToCheck.includes(baseDomain) && 
-            (domainToCheck.includes('.co.') || domainToCheck.includes('.com.') || 
-             domainToCheck.match(/\.[a-z]{2}$/) !== null)) {
-          return true;
-        }
-      }
-      
-      return false;
-    }
-    
-    // Special case: Email clients are always productive
-    if (isEmailClient(domain)) {
-      console.log(`Domain ${domain} is an email client, forcing always-productive classification`);
-      return {
-        category: 'always-productive',
-        reason: 'Email clients are considered work/productivity tools',
-        timestamp: Date.now(),
-        domain: domain
-      };
-    }
-    
-    // Special case: Educational/productivity domains are always productive
-    if (isAlwaysProductiveDomain(domain)) {
-      console.log(`Domain ${domain} is an educational/productivity tool, forcing always-productive classification`);
-      return {
-        category: 'always-productive',
-        reason: 'Educational and productivity platforms are considered work tools',
-        timestamp: Date.now(),
-        domain: domain
-      };
-    }
-    
-    if (isMixedContentDomain(domain)) {
-      console.log(`Domain ${domain} is a known mixed-content site, forcing context-dependent classification`);
-      const forcedResult = {
-        category: 'context-dependent',
-        reason: 'This site contains both productive and non-productive content that varies by specific usage',
-        timestamp: Date.now(),
-        domain: domain,
-        forcedClassification: true
-      };
-      
-      // Cache with shorter expiration for forced classifications
-      domainCategoryCache.set(domain, forcedResult);
-      
-      return forcedResult;
-    }
-    
-    const prompt = `Categorize domain "${domain}" as one of: "always-productive" (work/education), "always-nonproductive" (entertainment/social), or "context-dependent" (varies by content). For video sites, news sites, or social media, ALWAYS use "context-dependent" as they can contain both educational and entertainment content. Use "context-dependent" whenever there's doubt.
-Return only JSON:
-{"category":"category_name","reason":"brief reason","urlPatterns":["pattern1","pattern2"]}
+    // Create a special prompt specifically for domain categorization
+    const prompt = `
+Categorize this domain: "${domain}"
+
+Your task is to categorize this domain into one of three categories:
+1. "always-productive": Domain is used exclusively for work, education, or productivity tools
+2. "always-nonproductive": Domain is used exclusively for entertainment, social media, or shopping
+3. "context-dependent": Domain can be both productive and non-productive depending on specific content
+
+You must choose ONLY ONE category. Avoid choosing "context-dependent" unless it's absolutely necessary.
+
+Return ONLY a JSON object with these fields:
+- category: one of the three categories above
+- reason: brief explanation for this categorization (1-2 sentences)
+- urlPatterns: for context-dependent domains only, a list of URL patterns that would indicate productive vs non-productive content
 `;
 
     // Make request to Gemini API
@@ -437,41 +216,19 @@ Return only JSON:
     // Store in cache
     domainCategoryCache.set(domain, analysis);
     
-    console.log(`Successfully categorized domain ${domain} as ${analysis.category} and cached result`);
     return analysis;
   } catch (error) {
     console.error('Error getting domain category:', error);
     // Increment error counter
     apiUsageStats.errors++;
     
-    // For error cases, we want to be more cautious about classification
-    // Check if this domain is likely to be a mixed content domain based on keywords
-    const domainLower = domain.toLowerCase();
-    const likelyMixedContent = 
-      domainLower.includes('tube') || 
-      domainLower.includes('video') || 
-      domainLower.includes('news') || 
-      domainLower.includes('social') || 
-      domainLower.includes('media') || 
-      domainLower.includes('edu') || 
-      domainLower.includes('learn') || 
-      domainLower.includes('forum') || 
-      domainLower.includes('community') || 
-      domainLower.includes('watch');
-    
-    // Return a default value for error cases - always use context-dependent when in doubt
-    const defaultResult = {
+    // Return a default value for error cases
+    return {
       category: 'context-dependent',
-      reason: `Error during domain categorization: ${error.message}. Using context-dependent to allow content-specific analysis.`,
+      reason: 'Error during domain categorization',
       timestamp: Date.now(),
       domain: domain
     };
-    
-    // Cache error result with a shorter expiration (1 day) to force retry sooner
-    domainCategoryCache.set(domain, defaultResult);
-    console.log(`Error categorizing domain ${domain}, using default context-dependent and caching to prevent repeated errors. Likely mixed content: ${likelyMixedContent}`);
-    
-    return defaultResult;
   }
 }
 
@@ -498,215 +255,11 @@ async function analyzeTab(title, url, domain, content = null) {
   }
 
   try {
-    console.log(`Analyzing tab: domain=${domain}, url=${url}, title=${title}`);
-    
-    // List of domains that should always be classified as productive
-    const alwaysProductiveDomains = [
-      // Educational platforms
-      'coursera.org', 'udemy.com', 'khanacademy.org', 'edx.org', 'pluralsight.com',
-      'lynda.com', 'linkedin.com/learning', 'brilliant.org', 'wondrium.com',
-      'masterclass.com', 'skillshare.com', 'codecademy.com', 'freecodecamp.org',
-      'futurelearn.com', 'datacamp.com', 'sololearn.com', 'duolingo.com',
-      'memrise.com', 'rosettastone.com', 'babbel.com', 'learncodeonline.in',
-      
-      // Research and academic
-      'scholar.google.com', 'pubmed.ncbi.nlm.nih.gov', 'jstor.org',
-      'researchgate.net', 'academia.edu', 'arxiv.org', 'semanticscholar.org',
-      'sciencedirect.com', 'nature.com', 'science.org', 'ieee.org', 'acm.org',
-      
-      // Productivity and work tools
-      'docs.google.com', 'drive.google.com', 'sheets.google.com', 'slides.google.com',
-      'calendar.google.com', 'meet.google.com', 'office.com', 'office365.com',
-      'microsoft365.com', 'teams.microsoft.com', 'sharepoint.com', 'onedrive.live.com',
-      'notion.so', 'evernote.com', 'trello.com', 'asana.com', 'monday.com',
-      'airtable.com', 'figma.com', 'miro.com', 'atlassian.com', 'jira.com',
-      'confluence.com', 'zoom.us', 'webex.com', 'slack.com', 'dropbox.com',
-      'box.com', 'miro.com', 'lucidchart.com', 'smartsheet.com', 'clickup.com',
-      
-      // Development and technical
-      'github.com', 'gitlab.com', 'bitbucket.org', 'stackoverflow.com', 'stackexchange.com',
-      'replit.com', 'codesandbox.io', 'codepen.io', 'jsfiddle.net', 'aws.amazon.com',
-      'cloud.google.com', 'azure.microsoft.com', 'digitalocean.com', 'heroku.com',
-      'vercel.com', 'netlify.com', 'firebase.google.com'
-    ];
-
-    // Check if this is a known mixed-content domain that should always skip domain categorization
-    const knownMixedContentDomains = [
-      // Video platforms with mixed content
-      'youtube.com', 'youtu.be', 'vimeo.com', 'dailymotion.com', 'twitch.tv',
-      'nebula.tv', 'curiositystream.com', 'ted.com',
-      
-      // Social media and discussion platforms
-      'reddit.com', 'twitter.com', 'x.com', 'linkedin.com', 'facebook.com',
-      'instagram.com', 'pinterest.com', 'tumblr.com', 'mastodon.social',
-      'tiktok.com', 'discordapp.com', 'discord.com', 'slack.com', 'teams.microsoft.com',
-      'quora.com', 'stackoverflow.com', 'stackexchange.com', 'medium.com', 'substack.com',
-      'hackernews.com', 'news.ycombinator.com', 'discourse.org', 'github.com',
-      
-      // News and media
-      'nytimes.com', 'wsj.com', 'washingtonpost.com', 'ft.com', 'economist.com',
-      'cnn.com', 'foxnews.com', 'bbc.com', 'bbc.co.uk', 'reuters.com', 
-      'apnews.com', 'bloomberg.com', 'cnbc.com', 'forbes.com', 'businessinsider.com',
-      'theguardian.com', 'independent.co.uk', 'aljazeera.com', 'time.com',
-      'newsweek.com', 'theatlantic.com', 'newyorker.com', 'wired.com',
-      'techcrunch.com', 'arstechnica.com', 'engadget.com', 'theverge.com',
-      'news.yahoo.com', 'news.google.com', 'msn.com', 'cnet.com', 'zdnet.com',
-      
-      // Content aggregators
-      'flipboard.com', 'feedly.com', 'pocket.co', 'getpocket.com', 'instapaper.com',
-      'digg.com', 'slashdot.org', 'metafilter.com', 'producthunt.com',
-      
-      // Research and reference
-      'wikipedia.org', 'scholar.google.com', 'pubmed.ncbi.nlm.nih.gov', 'jstor.org',
-      'researchgate.net', 'academia.edu', 'arxiv.org', 'semanticscholar.org',
-      
-      // Streaming and entertainment (could include educational content)
-      'netflix.com', 'hulu.com', 'disneyplus.com', 'primevideo.com', 'hbomax.com',
-      'peacocktv.com', 'paramountplus.com', 'discoveryplus.com', 'appletv.apple.com',
-      
-      // E-commerce and marketplaces (could be productive or unproductive)
-      'amazon.com', 'ebay.com', 'etsy.com', 'walmart.com', 'target.com',
-      'bestbuy.com', 'newegg.com', 'alibaba.com', 'aliexpress.com',
-      'homedepot.com', 'lowes.com', 'ikea.com', 'wayfair.com',
-      
-      // Productivity and work tools with mixed usage
-      'google.com', 'docs.google.com', 'drive.google.com', 'calendar.google.com',
-      'office.com', 'microsoft.com', 'notion.so', 'evernote.com', 'trello.com',
-      'asana.com', 'monday.com', 'airtable.com', 'figma.com', 'miro.com',
-      
-      // Audio platforms with mixed content
-      'spotify.com', 'podcasts.apple.com', 'soundcloud.com', 'audible.com',
-      'iheart.com', 'pandora.com', 'tunein.com', 'stitcher.com',
-      
-      // Creative and hobby platforms
-      'behance.net', 'dribbble.com', 'deviantart.com', 'flickr.com',
-      'unsplash.com', 'pexels.com', 'pixabay.com', 'instructables.com',
-      'ravelry.com', 'allrecipes.com', 'epicurious.com', 'foodnetwork.com',
-      
-      // Other popular mixed-content sites
-      'goodreads.com', 'imdb.com', 'rottentomatoes.com', 'metacritic.com',
-      'webmd.com', 'mayoclinic.org', 'healthline.com', 'medlineplus.gov',
-      'zillow.com', 'redfin.com', 'realtor.com', 'tripadvisor.com', 'expedia.com',
-      'booking.com', 'airbnb.com', 'maps.google.com'
-    ];
-    
-    // List of email clients that should always be marked as productive
-    const emailDomains = [
-      'gmail.com', 'mail.google.com', 'outlook.com', 'outlook.office.com', 'outlook.live.com',
-      'mail.yahoo.com', 'yahoo.mail.com', 'mail.proton.me', 'protonmail.com', 'aol.com',
-      'mail.aol.com', 'zoho.com', 'mail.zoho.com', 'icloud.com', 'mail.icloud.com',
-      'mail.com', 'fastmail.com', 'mail.ru', 'yandex.mail.ru', 'tutanota.com',
-      'hey.com', 'hotmail.com', 'live.com', 'mail.sina.com', 'mail.qq.com',
-      'gmx.com', 'gmx.net', 'web.de', 'mail.163.com', 'mail.126.com',
-      'mail.yandex.com', 'yandex.com'
-    ];
-    
-    // Helper function to check if a domain is an email client
-    function isEmailClient(domainToCheck) {
-      // Direct match
-      if (emailDomains.includes(domainToCheck)) {
-        return true;
-      }
-      
-      // Check for subdomains of email services
-      for (const emailDomain of emailDomains) {
-        if (domainToCheck.endsWith(`.${emailDomain}`)) {
-          return true;
-        }
-      }
-      
-      // Check for common email client patterns
-      if (domainToCheck.includes('mail.') || 
-          domainToCheck.includes('email.') || 
-          domainToCheck.includes('webmail.') || 
-          domainToCheck.includes('outlook.') ||
-          domainToCheck.match(/mail\d*\.[a-z]+\.[a-z]+$/)) {
-        return true;
-      }
-      
-      return false;
-    }
-    
-    // Helper function to check if a domain matches any in our mixed-content list
-    function isMixedContentDomain(domainToCheck) {
-      // Direct match
-      if (knownMixedContentDomains.includes(domainToCheck)) {
-        return true;
-      }
-      
-      // Check for subdomains (e.g., sub.example.com matches example.com)
-      for (const knownDomain of knownMixedContentDomains) {
-        if (domainToCheck.endsWith(`.${knownDomain}`)) {
-          return true;
-        }
-        
-        // Special case for country-specific domains (e.g., amazon.co.uk should match amazon.com)
-        const baseDomain = knownDomain.split('.')[0];
-        if (baseDomain.length > 3 && !baseDomain.includes('/') && 
-            domainToCheck.includes(baseDomain) && 
-            (domainToCheck.includes('.co.') || domainToCheck.includes('.com.') || 
-             domainToCheck.match(/\.[a-z]{2}$/) !== null)) {
-          return true;
-        }
-      }
-      
-      return false;
-    }
-    
-    // Special case: Email clients are always productive regardless of content
-    if (isEmailClient(domain)) {
-      console.log(`Domain ${domain} is an email client, automatically marking as productive`);
-      return {
-        isProductive: true,
-        score: 95,
-        categories: ['Work', 'Communication'],
-        explanation: 'Email clients are automatically marked as productive',
-        domainCategory: 'always-productive',
-        domainReason: 'Email clients are considered work tools',
-        domain: domain,
-        analysisSource: 'email-client-rule',
-        skipContentAnalysis: true
-      };
-    }
-    
-    // For known mixed-content domains, skip domain categorization completely and go straight to content/title analysis
-    if (isMixedContentDomain(domain)) {
-      console.log(`Domain ${domain} is a known mixed-content site, skipping domain categorization and going directly to content analysis`);
-      
-      // Create a fake domain info object for context-dependent domains
-      const mixedContentDomainInfo = {
-        category: 'context-dependent',
-        reason: 'This site contains both productive and non-productive content that varies by specific usage',
-        domain: domain,
-        knownMixedContent: true, // Add this flag to indicate this is a known mixed-content domain
-        skipDomainCheck: true    // Indicate we're skipping domain checks for this site
-      };
-      
-      // Go directly to content or title analysis based on what's available
-      if (content && content.trim() !== '') {
-        // Extra logging for YouTube analysis
-        if (domain === 'youtube.com' || domain === 'youtu.be') {
-          console.log(`YouTube content analysis for: ${title}`);
-          console.log(`Content snippet: ${content.substring(0, 100)}...`);
-        }
-        return await analyzeContentWithDomainInfo(title, content, url, domain, mixedContentDomainInfo);
-      } else {
-        // Extra logging for YouTube analysis
-        if (domain === 'youtube.com' || domain === 'youtu.be') {
-          console.log(`YouTube title-only analysis for: ${title}`);
-        }
-        return await analyzeTitleWithDomainInfo(title, url, domain, mixedContentDomainInfo);
-      }
-    }
-    
-    // STEP 1: For non-mixed content domains, get domain categorization first
-    console.log(`Getting domain categorization for ${domain}`);
+    // First, get domain categorization
     const domainCategorization = await getDomainCategory(domain);
-    console.log(`Domain ${domain} categorized as: ${domainCategorization.category}`);
     
-    // STEP 2: If domain is definitively categorized, return immediately without content analysis
+    // If domain is definitively categorized, we may not need content analysis
     if (domainCategorization.category === 'always-productive') {
-      console.log(`Domain ${domain} is always-productive, skipping content analysis`);
       return {
         isProductive: true,
         score: 90,
@@ -714,11 +267,9 @@ async function analyzeTab(title, url, domain, content = null) {
         explanation: `Domain ${domain} is categorized as always productive: ${domainCategorization.reason}`,
         domainCategory: 'always-productive',
         domainReason: domainCategorization.reason,
-        domain: domain,
-        analysisSource: 'domain-categorization' // Track the source for analytics
+        domain: domain
       };
     } else if (domainCategorization.category === 'always-nonproductive') {
-      console.log(`Domain ${domain} is always-nonproductive, skipping content analysis`);
       return {
         isProductive: false,
         score: 10,
@@ -726,13 +277,9 @@ async function analyzeTab(title, url, domain, content = null) {
         explanation: `Domain ${domain} is categorized as always non-productive: ${domainCategorization.reason}`,
         domainCategory: 'always-nonproductive',
         domainReason: domainCategorization.reason,
-        domain: domain,
-        analysisSource: 'domain-categorization' // Track the source for analytics
+        domain: domain
       };
     }
-    
-    // STEP 3: Only for context-dependent domains, analyze content
-    console.log(`Domain ${domain} is context-dependent, proceeding with ${content ? 'content' : 'title'} analysis`);
     
     // For context-dependent domains, analyze content if available, otherwise analyze title
     if (content && content.trim() !== '') {
@@ -753,8 +300,7 @@ async function analyzeTab(title, url, domain, content = null) {
       explanation: 'Error during analysis',
       domainCategory: 'context-dependent',
       domainReason: 'Unable to categorize due to analysis error',
-      domain: domain,
-      analysisSource: 'error' // Track the source for analytics
+      domain: domain
     };
   }
 }
@@ -764,38 +310,26 @@ async function analyzeTab(title, url, domain, content = null) {
  */
 async function analyzeTitleWithDomainInfo(title, url, domain, domainInfo) {
   try {
-    console.log(`Analyzing title for context-dependent domain ${domain}: "${title}"`);
-    
-    // Check if this is a known mixed content domain (YouTube, Reddit, etc.)
-    const isKnownMixedContent = domainInfo.knownMixedContent || 
-                              (domain === 'youtube.com' || domain === 'youtu.be' || 
-                               domain === 'reddit.com' || domain === 'twitter.com' || 
-                               domain === 'x.com');
-    
-    // Special handling for YouTube to improve analysis
-    let enhancedPrompt = '';
-    if (domain === 'youtube.com' || domain === 'youtu.be') {
-      enhancedPrompt = `When analyzing YouTube content:
-- Educational videos, tutorials, lectures, documentaries are productive
-- Entertainment, gaming, music videos, comedy are non-productive
-- Learning content in entertaining format (like educational channels) should be productive
-- Analyze title carefully to determine if it's educational or entertainment
-`;
-    }
-    
-    // Special handling for other domains with mixed content types
-    if (domain === 'reddit.com') {
-      enhancedPrompt = `For Reddit, consider the subreddit and topic:
-- Educational, science, learning, career subreddits are productive
-- Entertainment, memes, gaming subreddits are non-productive
-`;
-    }
-    
-    // Create compact title analysis prompt to minimize token usage
-    const prompt = `Classify: "${title}" (URL: ${url})
-Domain ${domain} is "${domainInfo.category}": "${domainInfo.reason}"
-${enhancedPrompt}Return only JSON: {"isProductive":true/false,"score":0-100,"categories":[],"explanation":"reason"}
-Productive = educational/work/research/productivity content`;
+    // Create prompt for Gemini WITHOUT domain categorization request
+    const prompt = `
+Classify tab: "${title}" (URL: ${url}, Domain: ${domain})
+
+Note: This domain is already categorized as "${domainInfo.category}" because: "${domainInfo.reason}"
+
+Return JSON:
+- isProductive (bool)
+- score (0-100)
+- categories (array)
+- explanation (string)
+
+Productive if:
+1. Educational content
+2. Professional development
+3. Work tools
+4. Research
+5. Productivity tools
+6. Email
+    `;
 
     // Make request to Gemini API
     const result = await model.generateContent(prompt);
@@ -841,15 +375,6 @@ Productive = educational/work/research/productivity content`;
     
     // Attach domain for reference
     analysis.domain = domain;
-    
-    // Add mixed content information
-    analysis.knownMixedContent = isKnownMixedContent || false;
-    analysis.skipDomainCheck = domainInfo.skipDomainCheck || false;
-    
-    // Set the analysis source
-    analysis.analysisSource = 'title-analysis';
-    
-    console.log(`Title analysis complete for ${domain}. Result: ${analysis.isProductive ? 'productive' : 'non-productive'} (score: ${analysis.score})`);
 
     return analysis;
   } catch (error) {
@@ -862,11 +387,10 @@ Productive = educational/work/research/productivity content`;
       isProductive: false,
       score: 0,
       categories: [],
-      explanation: 'Error during title analysis: ' + error.message,
+      explanation: 'Error during title analysis',
       domainCategory: domainInfo.category,
       domainReason: domainInfo.reason,
-      domain: domain,
-      analysisSource: 'title-analysis-error'
+      domain: domain
     };
   }
 }
@@ -876,34 +400,26 @@ Productive = educational/work/research/productivity content`;
  */
 async function analyzeContentWithDomainInfo(title, content, url = '', domain = '', domainInfo) {
   try {
-    console.log(`Analyzing content for context-dependent domain ${domain}, content length: ${content.length}`);
-    
-    // Check if this is a known mixed content domain (YouTube, Reddit, etc.)
-    const isKnownMixedContent = domainInfo.knownMixedContent || 
-                              (domain === 'youtube.com' || domain === 'youtu.be' || 
-                               domain === 'reddit.com' || domain === 'twitter.com' || 
-                               domain === 'x.com');
-    
     // Limit content length to avoid token limits
     const truncatedContent = content.substring(0, 2000);
     
-    // Special handling for YouTube to improve analysis
-    let enhancedPrompt = '';
-    if (domain === 'youtube.com' || domain === 'youtu.be') {
-      enhancedPrompt = `When analyzing YouTube content:
-- Educational videos, tutorials, lectures, documentaries are productive
-- Entertainment, gaming, music videos, comedy are non-productive
-- Consider the video title, channel name, and content carefully to determine purpose
-- If a video has educational value, classify it as productive even if it's entertainment-adjacent
-`;
-    }
-    
-    // Create compact content analysis prompt to minimize token usage
-    const prompt = `Analyze: "${title}" (URL: ${url})
-Domain ${domain} is "${domainInfo.category}": "${domainInfo.reason}"
-${enhancedPrompt}Content: """${truncatedContent}"""
-Return only JSON: {"isProductive":true/false,"score":0-1,"categories":[],"explanation":"reason"}
-Productive = educational/work/research/productivity content`;
+    // Create prompt for the model WITHOUT domain categorization request
+    const prompt = `
+Analyze: "${title}" (URL: ${url}, Domain: ${domain})
+
+Note: This domain is already categorized as "${domainInfo.category}" because: "${domainInfo.reason}"
+
+Content snippet:
+"""
+${truncatedContent}
+"""
+
+Return JSON:
+- isProductive (bool)
+- score (0-1)
+- categories (array)
+- explanation (string)
+    `;
 
     // Call the Gemini API
     const result = await model.generateContent(prompt);
@@ -937,13 +453,8 @@ Productive = educational/work/research/productivity content`;
         explanation: analysisResult.explanation || "No explanation provided",
         domainCategory: domainInfo.category,
         domainReason: domainInfo.reason,
-        domain: domain,
-        analysisSource: 'content-analysis',
-        knownMixedContent: isKnownMixedContent || false,
-        skipDomainCheck: domainInfo.skipDomainCheck || false
+        domain: domain
       };
-      
-      console.log(`Content analysis complete for ${domain}. Result: ${result.isProductive ? 'productive' : 'non-productive'} (score: ${result.score})`);
       
       return result;
     } else {
@@ -955,25 +466,8 @@ Productive = educational/work/research/productivity content`;
     // Increment error counter
     apiUsageStats.errors++;
     
-    // Attempt to fall back to title-only analysis
-    console.log(`Falling back to title analysis for ${domain} due to content analysis error`);
-    try {
-      return await analyzeTitleWithDomainInfo(title, url, domain, domainInfo);
-    } catch (fallbackError) {
-      console.error("Error in fallback title analysis:", fallbackError);
-      
-      // Return a default response if all else fails
-      return {
-        isProductive: false,
-        score: 0,
-        categories: [],
-        explanation: 'Error during content analysis: ' + error.message,
-        domainCategory: domainInfo.category,
-        domainReason: domainInfo.reason,
-        domain: domain,
-        analysisSource: 'content-analysis-error'
-      };
-    }
+    // Fall back to title-only analysis
+    return await analyzeTitleWithDomainInfo(title, url, domain, domainInfo);
   }
 }
 
@@ -1019,29 +513,20 @@ app.post('/api/tabs', trackApiUsage('title'), async (req, res) => {
     if (!tab || !tab.title || !tab.id || !tab.url) {
       return res.status(400).json({ success: false, error: 'Tab data is required' });
     }
-    
     // Validate URL
     if (!validator.isURL(tab.url, { require_protocol: true })) {
       return res.status(400).json({ success: false, error: 'Invalid URL' });
     }
-    
     // Sanitize title
     const cleanTitle = validator.escape(tab.title);
     
     // Extract domain
     const domain = extractDomain(tab.url);
-    
-    console.log(`API request to analyze tab: ${tab.id}, domain: ${domain}, title: ${cleanTitle}`);
 
-    // Use the optimized unified analyze function
-    // This follows the prioritization pattern:
-    // 1. Check domain categorization first (from cache if available)
-    // 2. Only proceed to title/content analysis for context-dependent domains
+    // Use the unified analyze function
     const analysis = await analyzeTab(cleanTitle, tab.url, domain);
     
-    console.log(`Tab analysis complete for ${domain}. Result: ${analysis.isProductive ? 'productive' : 'non-productive'} (score: ${analysis.score})`);
-    
-    // Include detailed API usage statistics in response
+    // Include API usage statistics in response
     res.json({ 
       success: true, 
       id: tab.id, 
@@ -1051,15 +536,11 @@ app.post('/api/tabs', trackApiUsage('title'), async (req, res) => {
         categories: analysis.categories,
         explanation: analysis.explanation,
         domainCategory: analysis.domainCategory,
-        domainReason: analysis.domainReason,
-        analysisSource: analysis.analysisSource || 'unknown'
+        domainReason: analysis.domainReason
       },
       apiUsage: {
         dailyCalls: apiUsageStats.dailyCalls,
-        titleAnalysisCalls: apiUsageStats.titleAnalysisCalls,
-        domainCategorizationCalls: apiUsageStats.domainCategorizationCalls,
-        lastReset: apiUsageStats.lastReset,
-        tokensUsed: apiUsageStats.tokensUsed
+        lastReset: apiUsageStats.lastReset
       }
     });
   } catch (error) {
@@ -1077,33 +558,21 @@ app.post('/api/analyze-title', trackApiUsage('title'), async (req, res) => {
     if (!title) {
       return res.status(400).json({ success: false, error: 'Title is required' });
     }
-    
     // Sanitize title
     const cleanTitle = validator.escape(title);
     
     // Use the provided domain or extract it from URL
     const extractedDomain = domain || (url ? extractDomain(url) : '');
     
-    console.log(`API request to analyze title: ${cleanTitle} for domain ${extractedDomain}`);
-    
-    // Use the optimized unified analyze function - this will:
-    // 1. First check domain-level categorization (always-productive/always-nonproductive)
-    // 2. Only if domain is context-dependent, analyze the title content
-    // This approach minimizes API calls to Gemini for titles on already categorized domains
+    // Use the unified analyze function
     const analysis = await analyzeTab(cleanTitle, url || '', extractedDomain);
     
-    console.log(`Analysis complete for ${extractedDomain}. Result: ${analysis.isProductive ? 'productive' : 'non-productive'} (score: ${analysis.score})`);
-    
-    // Include detailed API usage statistics in response
     res.json({
       success: true,
       ...analysis,
       apiUsage: {
         dailyCalls: apiUsageStats.dailyCalls,
-        titleAnalysisCalls: apiUsageStats.titleAnalysisCalls,
-        domainCategorizationCalls: apiUsageStats.domainCategorizationCalls,
-        lastReset: apiUsageStats.lastReset,
-        tokensUsed: apiUsageStats.tokensUsed
+        lastReset: apiUsageStats.lastReset
       }
     });
   } catch (error) {
@@ -1128,27 +597,15 @@ app.post('/api/analyze-content', trackApiUsage('content'), async (req, res) => {
     // Extract domain
     const domain = url ? extractDomain(url) : '';
     
-    console.log(`API request to analyze content for domain ${domain}, content length: ${content.length}`);
-    
-    // Use the optimized unified analyze function with content
-    // This follows the prioritization pattern:
-    // 1. Check domain categorization first (using cache where available)
-    // 2. Only analyze content for context-dependent domains
-    // 3. Skip content analysis entirely for known always-productive/always-nonproductive domains
+    // Use the unified analyze function with content
     const analysis = await analyzeTab(cleanTitle, url || '', domain, content);
     
-    console.log(`Content analysis complete for ${domain}. Result: ${analysis.isProductive ? 'productive' : 'non-productive'} (score: ${analysis.score})`);
-    
-    // Include detailed API usage statistics in response
     res.json({
       success: true,
       ...analysis,
       apiUsage: {
         dailyCalls: apiUsageStats.dailyCalls,
-        contentAnalysisCalls: apiUsageStats.contentAnalysisCalls,
-        domainCategorizationCalls: apiUsageStats.domainCategorizationCalls,
-        lastReset: apiUsageStats.lastReset,
-        tokensUsed: apiUsageStats.tokensUsed
+        lastReset: apiUsageStats.lastReset
       }
     });
   } catch (error) {
