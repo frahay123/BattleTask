@@ -147,16 +147,39 @@ const userLimiter = rateLimit({
 });
 app.use('/api/', userLimiter);
 
-// Clear any cached classification for YouTube and other problematic domains
-// This prevents incorrect "always-nonproductive" classification from persisting
-console.log('Clearing YouTube and problematic domains from cache on startup');
-const domainsToReset = ['youtube.com', 'youtu.be', 'reddit.com', 'twitter.com'];
+// Clear any cached classification for potentially problematic domains
+// This prevents incorrect classifications from persisting
+console.log('Clearing frequently used mixed-content domains from cache on startup');
+const domainsToReset = [
+  // Most common problematic domains that should always be context-dependent
+  'youtube.com', 'youtu.be', 'reddit.com', 'twitter.com', 'x.com', 
+  'facebook.com', 'linkedin.com', 'instagram.com', 'tiktok.com',
+  'amazon.com', 'netflix.com', 'google.com', 'github.com', 'stackoverflow.com',
+  'wikipedia.org', 'medium.com', 'quora.com', 'spotify.com',
+  'coursera.org', 'udemy.com', 'khanacademy.org', 'ted.com'
+];
+
+// Count how many domains were reset
+let resetCount = 0;
 domainsToReset.forEach(domain => {
   if (domainCategoryCache.has(domain)) {
     console.log(`Removing ${domain} from domain classification cache`);
     domainCategoryCache.delete(domain);
+    resetCount++;
   }
 });
+
+console.log(`Reset ${resetCount} domains in cache at startup`);
+
+// Clear the entire cache once per day if server stays running
+// This helps ensure we don't keep stale classifications
+setInterval(() => {
+  const cacheSize = domainCategoryCache.size;
+  if (cacheSize > 0) {
+    console.log(`Clearing entire domain classification cache (${cacheSize} entries)`);
+    domainCategoryCache.clear();
+  }
+}, 24 * 60 * 60 * 1000); // 24 hours
 
 /**
  * Get domain categorization - either from cache or by calling the API
@@ -201,15 +224,93 @@ async function getDomainCategory(domain) {
     // Create a compact prompt for domain categorization to minimize token usage
     // Check if this is a known mixed-content domain that should always be context-dependent
     const knownMixedContentDomains = [
-      'youtube.com', 'youtu.be', 'reddit.com', 'twitter.com', 'x.com', 
-      'linkedin.com', 'medium.com', 'quora.com', 'ted.com', 'vimeo.com',
-      'nytimes.com', 'wsj.com', 'cnn.com', 'bbc.com', 'bbc.co.uk',
-      'theguardian.com', 'reuters.com', 'bloomberg.com', 'forbes.com',
-      'news.yahoo.com', 'news.google.com', 'flipboard.com'
+      // Video platforms
+      'youtube.com', 'youtu.be', 'vimeo.com', 'dailymotion.com', 'twitch.tv',
+      'nebula.tv', 'curiositystream.com', 'ted.com', 'masterclass.com', 'skillshare.com',
+      'udemy.com', 'coursera.org', 'khanacademy.org', 'edx.org', 'pluralsight.com',
+      'lynda.com', 'linkedin.com/learning', 'brilliant.org', 'wondrium.com',
+      
+      // Social media and discussion platforms
+      'reddit.com', 'twitter.com', 'x.com', 'linkedin.com', 'facebook.com',
+      'instagram.com', 'pinterest.com', 'tumblr.com', 'mastodon.social',
+      'tiktok.com', 'discordapp.com', 'discord.com', 'slack.com', 'teams.microsoft.com',
+      'quora.com', 'stackoverflow.com', 'stackexchange.com', 'medium.com', 'substack.com',
+      'hackernews.com', 'news.ycombinator.com', 'discourse.org', 'github.com',
+      
+      // News and media
+      'nytimes.com', 'wsj.com', 'washingtonpost.com', 'ft.com', 'economist.com',
+      'cnn.com', 'foxnews.com', 'bbc.com', 'bbc.co.uk', 'reuters.com', 
+      'apnews.com', 'bloomberg.com', 'cnbc.com', 'forbes.com', 'businessinsider.com',
+      'theguardian.com', 'independent.co.uk', 'aljazeera.com', 'time.com',
+      'newsweek.com', 'theatlantic.com', 'newyorker.com', 'wired.com',
+      'techcrunch.com', 'arstechnica.com', 'engadget.com', 'theverge.com',
+      'news.yahoo.com', 'news.google.com', 'msn.com', 'cnet.com', 'zdnet.com',
+      
+      // Content aggregators
+      'flipboard.com', 'feedly.com', 'pocket.co', 'getpocket.com', 'instapaper.com',
+      'digg.com', 'slashdot.org', 'metafilter.com', 'producthunt.com',
+      
+      // Research and reference
+      'wikipedia.org', 'scholar.google.com', 'pubmed.ncbi.nlm.nih.gov', 'jstor.org',
+      'researchgate.net', 'academia.edu', 'arxiv.org', 'semanticscholar.org',
+      
+      // Streaming and entertainment (could include educational content)
+      'netflix.com', 'hulu.com', 'disneyplus.com', 'primevideo.com', 'hbomax.com',
+      'peacocktv.com', 'paramountplus.com', 'discoveryplus.com', 'appletv.apple.com',
+      
+      // E-commerce and marketplaces (could be productive or unproductive)
+      'amazon.com', 'ebay.com', 'etsy.com', 'walmart.com', 'target.com',
+      'bestbuy.com', 'newegg.com', 'alibaba.com', 'aliexpress.com',
+      'homedepot.com', 'lowes.com', 'ikea.com', 'wayfair.com',
+      
+      // Productivity and work tools with mixed usage
+      'google.com', 'docs.google.com', 'drive.google.com', 'calendar.google.com',
+      'office.com', 'microsoft.com', 'notion.so', 'evernote.com', 'trello.com',
+      'asana.com', 'monday.com', 'airtable.com', 'figma.com', 'miro.com',
+      
+      // Audio platforms with mixed content
+      'spotify.com', 'podcasts.apple.com', 'soundcloud.com', 'audible.com',
+      'iheart.com', 'pandora.com', 'tunein.com', 'stitcher.com',
+      
+      // Creative and hobby platforms
+      'behance.net', 'dribbble.com', 'deviantart.com', 'flickr.com',
+      'unsplash.com', 'pexels.com', 'pixabay.com', 'instructables.com',
+      'ravelry.com', 'allrecipes.com', 'epicurious.com', 'foodnetwork.com',
+      
+      // Other popular mixed-content sites
+      'goodreads.com', 'imdb.com', 'rottentomatoes.com', 'metacritic.com',
+      'webmd.com', 'mayoclinic.org', 'healthline.com', 'medlineplus.gov',
+      'zillow.com', 'redfin.com', 'realtor.com', 'tripadvisor.com', 'expedia.com',
+      'booking.com', 'airbnb.com', 'maps.google.com'
     ];
     
-    if (knownMixedContentDomains.includes(domain) || 
-        knownMixedContentDomains.some(d => domain.endsWith(`.${d}`))) {
+    // Helper function to check if a domain matches any in our mixed-content list
+    function isMixedContentDomain(domainToCheck) {
+      // Direct match
+      if (knownMixedContentDomains.includes(domainToCheck)) {
+        return true;
+      }
+      
+      // Check for subdomains (e.g., sub.example.com matches example.com)
+      for (const knownDomain of knownMixedContentDomains) {
+        if (domainToCheck.endsWith(`.${knownDomain}`)) {
+          return true;
+        }
+        
+        // Special case for country-specific domains (e.g., amazon.co.uk should match amazon.com)
+        const baseDomain = knownDomain.split('.')[0];
+        if (baseDomain.length > 3 && !baseDomain.includes('/') && 
+            domainToCheck.includes(baseDomain) && 
+            (domainToCheck.includes('.co.') || domainToCheck.includes('.com.') || 
+             domainToCheck.match(/\.[a-z]{2}$/) !== null)) {
+          return true;
+        }
+      }
+      
+      return false;
+    }
+    
+    if (isMixedContentDomain(domain)) {
       console.log(`Domain ${domain} is a known mixed-content site, forcing context-dependent classification`);
       const forcedResult = {
         category: 'context-dependent',
@@ -324,7 +425,125 @@ async function analyzeTab(title, url, domain, content = null) {
   try {
     console.log(`Analyzing tab: domain=${domain}, url=${url}, title=${title}`);
     
-    // STEP 1: Always get domain categorization first
+    // Check if this is a known mixed-content domain that should always skip domain categorization
+    const knownMixedContentDomains = [
+      // Video platforms
+      'youtube.com', 'youtu.be', 'vimeo.com', 'dailymotion.com', 'twitch.tv',
+      'nebula.tv', 'curiositystream.com', 'ted.com', 'masterclass.com', 'skillshare.com',
+      'udemy.com', 'coursera.org', 'khanacademy.org', 'edx.org', 'pluralsight.com',
+      'lynda.com', 'linkedin.com/learning', 'brilliant.org', 'wondrium.com',
+      
+      // Social media and discussion platforms
+      'reddit.com', 'twitter.com', 'x.com', 'linkedin.com', 'facebook.com',
+      'instagram.com', 'pinterest.com', 'tumblr.com', 'mastodon.social',
+      'tiktok.com', 'discordapp.com', 'discord.com', 'slack.com', 'teams.microsoft.com',
+      'quora.com', 'stackoverflow.com', 'stackexchange.com', 'medium.com', 'substack.com',
+      'hackernews.com', 'news.ycombinator.com', 'discourse.org', 'github.com',
+      
+      // News and media
+      'nytimes.com', 'wsj.com', 'washingtonpost.com', 'ft.com', 'economist.com',
+      'cnn.com', 'foxnews.com', 'bbc.com', 'bbc.co.uk', 'reuters.com', 
+      'apnews.com', 'bloomberg.com', 'cnbc.com', 'forbes.com', 'businessinsider.com',
+      'theguardian.com', 'independent.co.uk', 'aljazeera.com', 'time.com',
+      'newsweek.com', 'theatlantic.com', 'newyorker.com', 'wired.com',
+      'techcrunch.com', 'arstechnica.com', 'engadget.com', 'theverge.com',
+      'news.yahoo.com', 'news.google.com', 'msn.com', 'cnet.com', 'zdnet.com',
+      
+      // Content aggregators
+      'flipboard.com', 'feedly.com', 'pocket.co', 'getpocket.com', 'instapaper.com',
+      'digg.com', 'slashdot.org', 'metafilter.com', 'producthunt.com',
+      
+      // Research and reference
+      'wikipedia.org', 'scholar.google.com', 'pubmed.ncbi.nlm.nih.gov', 'jstor.org',
+      'researchgate.net', 'academia.edu', 'arxiv.org', 'semanticscholar.org',
+      
+      // Streaming and entertainment (could include educational content)
+      'netflix.com', 'hulu.com', 'disneyplus.com', 'primevideo.com', 'hbomax.com',
+      'peacocktv.com', 'paramountplus.com', 'discoveryplus.com', 'appletv.apple.com',
+      
+      // E-commerce and marketplaces (could be productive or unproductive)
+      'amazon.com', 'ebay.com', 'etsy.com', 'walmart.com', 'target.com',
+      'bestbuy.com', 'newegg.com', 'alibaba.com', 'aliexpress.com',
+      'homedepot.com', 'lowes.com', 'ikea.com', 'wayfair.com',
+      
+      // Productivity and work tools with mixed usage
+      'google.com', 'docs.google.com', 'drive.google.com', 'calendar.google.com',
+      'office.com', 'microsoft.com', 'notion.so', 'evernote.com', 'trello.com',
+      'asana.com', 'monday.com', 'airtable.com', 'figma.com', 'miro.com',
+      
+      // Audio platforms with mixed content
+      'spotify.com', 'podcasts.apple.com', 'soundcloud.com', 'audible.com',
+      'iheart.com', 'pandora.com', 'tunein.com', 'stitcher.com',
+      
+      // Creative and hobby platforms
+      'behance.net', 'dribbble.com', 'deviantart.com', 'flickr.com',
+      'unsplash.com', 'pexels.com', 'pixabay.com', 'instructables.com',
+      'ravelry.com', 'allrecipes.com', 'epicurious.com', 'foodnetwork.com',
+      
+      // Other popular mixed-content sites
+      'goodreads.com', 'imdb.com', 'rottentomatoes.com', 'metacritic.com',
+      'webmd.com', 'mayoclinic.org', 'healthline.com', 'medlineplus.gov',
+      'zillow.com', 'redfin.com', 'realtor.com', 'tripadvisor.com', 'expedia.com',
+      'booking.com', 'airbnb.com', 'maps.google.com'
+    ];
+    
+    // Helper function to check if a domain matches any in our mixed-content list
+    function isMixedContentDomain(domainToCheck) {
+      // Direct match
+      if (knownMixedContentDomains.includes(domainToCheck)) {
+        return true;
+      }
+      
+      // Check for subdomains (e.g., sub.example.com matches example.com)
+      for (const knownDomain of knownMixedContentDomains) {
+        if (domainToCheck.endsWith(`.${knownDomain}`)) {
+          return true;
+        }
+        
+        // Special case for country-specific domains (e.g., amazon.co.uk should match amazon.com)
+        const baseDomain = knownDomain.split('.')[0];
+        if (baseDomain.length > 3 && !baseDomain.includes('/') && 
+            domainToCheck.includes(baseDomain) && 
+            (domainToCheck.includes('.co.') || domainToCheck.includes('.com.') || 
+             domainToCheck.match(/\.[a-z]{2}$/) !== null)) {
+          return true;
+        }
+      }
+      
+      return false;
+    }
+    
+    // For known mixed-content domains, skip domain categorization completely and go straight to content/title analysis
+    if (isMixedContentDomain(domain)) {
+      console.log(`Domain ${domain} is a known mixed-content site, skipping domain categorization and going directly to content analysis`);
+      
+      // Create a fake domain info object for context-dependent domains
+      const mixedContentDomainInfo = {
+        category: 'context-dependent',
+        reason: 'This site contains both productive and non-productive content that varies by specific usage',
+        domain: domain,
+        knownMixedContent: true, // Add this flag to indicate this is a known mixed-content domain
+        skipDomainCheck: true    // Indicate we're skipping domain checks for this site
+      };
+      
+      // Go directly to content or title analysis based on what's available
+      if (content && content.trim() !== '') {
+        // Extra logging for YouTube analysis
+        if (domain === 'youtube.com' || domain === 'youtu.be') {
+          console.log(`YouTube content analysis for: ${title}`);
+          console.log(`Content snippet: ${content.substring(0, 100)}...`);
+        }
+        return await analyzeContentWithDomainInfo(title, content, url, domain, mixedContentDomainInfo);
+      } else {
+        // Extra logging for YouTube analysis
+        if (domain === 'youtube.com' || domain === 'youtu.be') {
+          console.log(`YouTube title-only analysis for: ${title}`);
+        }
+        return await analyzeTitleWithDomainInfo(title, url, domain, mixedContentDomainInfo);
+      }
+    }
+    
+    // STEP 1: For non-mixed content domains, get domain categorization first
     console.log(`Getting domain categorization for ${domain}`);
     const domainCategorization = await getDomainCategory(domain);
     console.log(`Domain ${domain} categorized as: ${domainCategorization.category}`);
@@ -391,10 +610,35 @@ async function analyzeTitleWithDomainInfo(title, url, domain, domainInfo) {
   try {
     console.log(`Analyzing title for context-dependent domain ${domain}: "${title}"`);
     
+    // Check if this is a known mixed content domain (YouTube, Reddit, etc.)
+    const isKnownMixedContent = domainInfo.knownMixedContent || 
+                              (domain === 'youtube.com' || domain === 'youtu.be' || 
+                               domain === 'reddit.com' || domain === 'twitter.com' || 
+                               domain === 'x.com');
+    
+    // Special handling for YouTube to improve analysis
+    let enhancedPrompt = '';
+    if (domain === 'youtube.com' || domain === 'youtu.be') {
+      enhancedPrompt = `When analyzing YouTube content:
+- Educational videos, tutorials, lectures, documentaries are productive
+- Entertainment, gaming, music videos, comedy are non-productive
+- Learning content in entertaining format (like educational channels) should be productive
+- Analyze title carefully to determine if it's educational or entertainment
+`;
+    }
+    
+    // Special handling for other domains with mixed content types
+    if (domain === 'reddit.com') {
+      enhancedPrompt = `For Reddit, consider the subreddit and topic:
+- Educational, science, learning, career subreddits are productive
+- Entertainment, memes, gaming subreddits are non-productive
+`;
+    }
+    
     // Create compact title analysis prompt to minimize token usage
     const prompt = `Classify: "${title}" (URL: ${url})
 Domain ${domain} is "${domainInfo.category}": "${domainInfo.reason}"
-Return only JSON: {"isProductive":true/false,"score":0-100,"categories":[],"explanation":"reason"}
+${enhancedPrompt}Return only JSON: {"isProductive":true/false,"score":0-100,"categories":[],"explanation":"reason"}
 Productive = educational/work/research/productivity content`;
 
     // Make request to Gemini API
@@ -442,6 +686,10 @@ Productive = educational/work/research/productivity content`;
     // Attach domain for reference
     analysis.domain = domain;
     
+    // Add mixed content information
+    analysis.knownMixedContent = isKnownMixedContent || false;
+    analysis.skipDomainCheck = domainInfo.skipDomainCheck || false;
+    
     // Set the analysis source
     analysis.analysisSource = 'title-analysis';
     
@@ -474,13 +722,30 @@ async function analyzeContentWithDomainInfo(title, content, url = '', domain = '
   try {
     console.log(`Analyzing content for context-dependent domain ${domain}, content length: ${content.length}`);
     
+    // Check if this is a known mixed content domain (YouTube, Reddit, etc.)
+    const isKnownMixedContent = domainInfo.knownMixedContent || 
+                              (domain === 'youtube.com' || domain === 'youtu.be' || 
+                               domain === 'reddit.com' || domain === 'twitter.com' || 
+                               domain === 'x.com');
+    
     // Limit content length to avoid token limits
     const truncatedContent = content.substring(0, 2000);
+    
+    // Special handling for YouTube to improve analysis
+    let enhancedPrompt = '';
+    if (domain === 'youtube.com' || domain === 'youtu.be') {
+      enhancedPrompt = `When analyzing YouTube content:
+- Educational videos, tutorials, lectures, documentaries are productive
+- Entertainment, gaming, music videos, comedy are non-productive
+- Consider the video title, channel name, and content carefully to determine purpose
+- If a video has educational value, classify it as productive even if it's entertainment-adjacent
+`;
+    }
     
     // Create compact content analysis prompt to minimize token usage
     const prompt = `Analyze: "${title}" (URL: ${url})
 Domain ${domain} is "${domainInfo.category}": "${domainInfo.reason}"
-Content: """${truncatedContent}"""
+${enhancedPrompt}Content: """${truncatedContent}"""
 Return only JSON: {"isProductive":true/false,"score":0-1,"categories":[],"explanation":"reason"}
 Productive = educational/work/research/productivity content`;
 
@@ -517,7 +782,9 @@ Productive = educational/work/research/productivity content`;
         domainCategory: domainInfo.category,
         domainReason: domainInfo.reason,
         domain: domain,
-        analysisSource: 'content-analysis'
+        analysisSource: 'content-analysis',
+        knownMixedContent: isKnownMixedContent || false,
+        skipDomainCheck: domainInfo.skipDomainCheck || false
       };
       
       console.log(`Content analysis complete for ${domain}. Result: ${result.isProductive ? 'productive' : 'non-productive'} (score: ${result.score})`);
