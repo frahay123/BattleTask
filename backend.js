@@ -155,8 +155,12 @@ const domainsToReset = [
   'youtube.com', 'youtu.be', 'reddit.com', 'twitter.com', 'x.com', 
   'facebook.com', 'linkedin.com', 'instagram.com', 'tiktok.com',
   'amazon.com', 'netflix.com', 'google.com', 'github.com', 'stackoverflow.com',
-  'wikipedia.org', 'medium.com', 'quora.com', 'spotify.com',
-  'coursera.org', 'udemy.com', 'khanacademy.org', 'ted.com'
+  'wikipedia.org', 'medium.com', 'quora.com', 'spotify.com', 'ted.com',
+  
+  // Email clients that should be always productive
+  'gmail.com', 'mail.google.com', 'outlook.com', 'outlook.office.com',
+  'mail.yahoo.com', 'protonmail.com', 'mail.proton.me', 'fastmail.com',
+  'hotmail.com', 'yahoo.com'
 ];
 
 // Count how many domains were reset
@@ -223,19 +227,34 @@ async function getDomainCategory(domain) {
     
     // Create a compact prompt for domain categorization to minimize token usage
     // Check if this is a known mixed-content domain that should always be context-dependent
+    // Helper function to check if a domain is always productive
+    function isAlwaysProductiveDomain(domainToCheck) {
+      // Direct match
+      if (alwaysProductiveDomains.includes(domainToCheck)) {
+        return true;
+      }
+      
+      // Check for subdomains of always productive domains
+      for (const prodDomain of alwaysProductiveDomains) {
+        if (domainToCheck.endsWith(`.${prodDomain}`)) {
+          return true;
+        }
+      }
+      
+      return false;
+    }
+    
+    // These domains contain truly mixed content that needs to be analyzed per-page
     const knownMixedContentDomains = [
-      // Video platforms
+      // Video platforms with truly mixed content
       'youtube.com', 'youtu.be', 'vimeo.com', 'dailymotion.com', 'twitch.tv',
-      'nebula.tv', 'curiositystream.com', 'ted.com', 'masterclass.com', 'skillshare.com',
-      'udemy.com', 'coursera.org', 'khanacademy.org', 'edx.org', 'pluralsight.com',
-      'lynda.com', 'linkedin.com/learning', 'brilliant.org', 'wondrium.com',
+      'nebula.tv', 'curiositystream.com', 'ted.com',
       
       // Social media and discussion platforms
-      'reddit.com', 'twitter.com', 'x.com', 'linkedin.com', 'facebook.com',
+      'reddit.com', 'twitter.com', 'x.com', 'facebook.com',
       'instagram.com', 'pinterest.com', 'tumblr.com', 'mastodon.social',
-      'tiktok.com', 'discordapp.com', 'discord.com', 'slack.com', 'teams.microsoft.com',
-      'quora.com', 'stackoverflow.com', 'stackexchange.com', 'medium.com', 'substack.com',
-      'hackernews.com', 'news.ycombinator.com', 'discourse.org', 'github.com',
+      'tiktok.com', 'discord.com', 'quora.com', 'medium.com', 'substack.com',
+      'hackernews.com', 'news.ycombinator.com', 'discourse.org',
       
       // News and media
       'nytimes.com', 'wsj.com', 'washingtonpost.com', 'ft.com', 'economist.com',
@@ -250,9 +269,8 @@ async function getDomainCategory(domain) {
       'flipboard.com', 'feedly.com', 'pocket.co', 'getpocket.com', 'instapaper.com',
       'digg.com', 'slashdot.org', 'metafilter.com', 'producthunt.com',
       
-      // Research and reference
-      'wikipedia.org', 'scholar.google.com', 'pubmed.ncbi.nlm.nih.gov', 'jstor.org',
-      'researchgate.net', 'academia.edu', 'arxiv.org', 'semanticscholar.org',
+      // Wikipedia (depends on the article)
+      'wikipedia.org',
       
       // Streaming and entertainment (could include educational content)
       'netflix.com', 'hulu.com', 'disneyplus.com', 'primevideo.com', 'hbomax.com',
@@ -263,10 +281,8 @@ async function getDomainCategory(domain) {
       'bestbuy.com', 'newegg.com', 'alibaba.com', 'aliexpress.com',
       'homedepot.com', 'lowes.com', 'ikea.com', 'wayfair.com',
       
-      // Productivity and work tools with mixed usage
-      'google.com', 'docs.google.com', 'drive.google.com', 'calendar.google.com',
-      'office.com', 'microsoft.com', 'notion.so', 'evernote.com', 'trello.com',
-      'asana.com', 'monday.com', 'airtable.com', 'figma.com', 'miro.com',
+      // General search and browsing
+      'google.com', 'bing.com', 'yahoo.com', 'duckduckgo.com', 'baidu.com',
       
       // Audio platforms with mixed content
       'spotify.com', 'podcasts.apple.com', 'soundcloud.com', 'audible.com',
@@ -283,6 +299,43 @@ async function getDomainCategory(domain) {
       'zillow.com', 'redfin.com', 'realtor.com', 'tripadvisor.com', 'expedia.com',
       'booking.com', 'airbnb.com', 'maps.google.com'
     ];
+    
+    // List of email clients that should always be marked as productive
+    const emailDomains = [
+      'gmail.com', 'mail.google.com', 'outlook.com', 'outlook.office.com', 'outlook.live.com',
+      'mail.yahoo.com', 'yahoo.mail.com', 'mail.proton.me', 'protonmail.com', 'aol.com',
+      'mail.aol.com', 'zoho.com', 'mail.zoho.com', 'icloud.com', 'mail.icloud.com',
+      'mail.com', 'fastmail.com', 'mail.ru', 'yandex.mail.ru', 'tutanota.com',
+      'hey.com', 'hotmail.com', 'live.com', 'mail.sina.com', 'mail.qq.com',
+      'gmx.com', 'gmx.net', 'web.de', 'mail.163.com', 'mail.126.com',
+      'mail.yandex.com', 'yandex.com'
+    ];
+    
+    // Helper function to check if a domain is an email client
+    function isEmailClient(domainToCheck) {
+      // Direct match
+      if (emailDomains.includes(domainToCheck)) {
+        return true;
+      }
+      
+      // Check for subdomains of email services
+      for (const emailDomain of emailDomains) {
+        if (domainToCheck.endsWith(`.${emailDomain}`)) {
+          return true;
+        }
+      }
+      
+      // Check for common email client patterns
+      if (domainToCheck.includes('mail.') || 
+          domainToCheck.includes('email.') || 
+          domainToCheck.includes('webmail.') || 
+          domainToCheck.includes('outlook.') ||
+          domainToCheck.match(/mail\d*\.[a-z]+\.[a-z]+$/)) {
+        return true;
+      }
+      
+      return false;
+    }
     
     // Helper function to check if a domain matches any in our mixed-content list
     function isMixedContentDomain(domainToCheck) {
@@ -308,6 +361,28 @@ async function getDomainCategory(domain) {
       }
       
       return false;
+    }
+    
+    // Special case: Email clients are always productive
+    if (isEmailClient(domain)) {
+      console.log(`Domain ${domain} is an email client, forcing always-productive classification`);
+      return {
+        category: 'always-productive',
+        reason: 'Email clients are considered work/productivity tools',
+        timestamp: Date.now(),
+        domain: domain
+      };
+    }
+    
+    // Special case: Educational/productivity domains are always productive
+    if (isAlwaysProductiveDomain(domain)) {
+      console.log(`Domain ${domain} is an educational/productivity tool, forcing always-productive classification`);
+      return {
+        category: 'always-productive',
+        reason: 'Educational and productivity platforms are considered work tools',
+        timestamp: Date.now(),
+        domain: domain
+      };
     }
     
     if (isMixedContentDomain(domain)) {
@@ -425,13 +500,41 @@ async function analyzeTab(title, url, domain, content = null) {
   try {
     console.log(`Analyzing tab: domain=${domain}, url=${url}, title=${title}`);
     
+    // List of domains that should always be classified as productive
+    const alwaysProductiveDomains = [
+      // Educational platforms
+      'coursera.org', 'udemy.com', 'khanacademy.org', 'edx.org', 'pluralsight.com',
+      'lynda.com', 'linkedin.com/learning', 'brilliant.org', 'wondrium.com',
+      'masterclass.com', 'skillshare.com', 'codecademy.com', 'freecodecamp.org',
+      'futurelearn.com', 'datacamp.com', 'sololearn.com', 'duolingo.com',
+      'memrise.com', 'rosettastone.com', 'babbel.com', 'learncodeonline.in',
+      
+      // Research and academic
+      'scholar.google.com', 'pubmed.ncbi.nlm.nih.gov', 'jstor.org',
+      'researchgate.net', 'academia.edu', 'arxiv.org', 'semanticscholar.org',
+      'sciencedirect.com', 'nature.com', 'science.org', 'ieee.org', 'acm.org',
+      
+      // Productivity and work tools
+      'docs.google.com', 'drive.google.com', 'sheets.google.com', 'slides.google.com',
+      'calendar.google.com', 'meet.google.com', 'office.com', 'office365.com',
+      'microsoft365.com', 'teams.microsoft.com', 'sharepoint.com', 'onedrive.live.com',
+      'notion.so', 'evernote.com', 'trello.com', 'asana.com', 'monday.com',
+      'airtable.com', 'figma.com', 'miro.com', 'atlassian.com', 'jira.com',
+      'confluence.com', 'zoom.us', 'webex.com', 'slack.com', 'dropbox.com',
+      'box.com', 'miro.com', 'lucidchart.com', 'smartsheet.com', 'clickup.com',
+      
+      // Development and technical
+      'github.com', 'gitlab.com', 'bitbucket.org', 'stackoverflow.com', 'stackexchange.com',
+      'replit.com', 'codesandbox.io', 'codepen.io', 'jsfiddle.net', 'aws.amazon.com',
+      'cloud.google.com', 'azure.microsoft.com', 'digitalocean.com', 'heroku.com',
+      'vercel.com', 'netlify.com', 'firebase.google.com'
+    ];
+
     // Check if this is a known mixed-content domain that should always skip domain categorization
     const knownMixedContentDomains = [
-      // Video platforms
+      // Video platforms with mixed content
       'youtube.com', 'youtu.be', 'vimeo.com', 'dailymotion.com', 'twitch.tv',
-      'nebula.tv', 'curiositystream.com', 'ted.com', 'masterclass.com', 'skillshare.com',
-      'udemy.com', 'coursera.org', 'khanacademy.org', 'edx.org', 'pluralsight.com',
-      'lynda.com', 'linkedin.com/learning', 'brilliant.org', 'wondrium.com',
+      'nebula.tv', 'curiositystream.com', 'ted.com',
       
       // Social media and discussion platforms
       'reddit.com', 'twitter.com', 'x.com', 'linkedin.com', 'facebook.com',
@@ -487,6 +590,43 @@ async function analyzeTab(title, url, domain, content = null) {
       'booking.com', 'airbnb.com', 'maps.google.com'
     ];
     
+    // List of email clients that should always be marked as productive
+    const emailDomains = [
+      'gmail.com', 'mail.google.com', 'outlook.com', 'outlook.office.com', 'outlook.live.com',
+      'mail.yahoo.com', 'yahoo.mail.com', 'mail.proton.me', 'protonmail.com', 'aol.com',
+      'mail.aol.com', 'zoho.com', 'mail.zoho.com', 'icloud.com', 'mail.icloud.com',
+      'mail.com', 'fastmail.com', 'mail.ru', 'yandex.mail.ru', 'tutanota.com',
+      'hey.com', 'hotmail.com', 'live.com', 'mail.sina.com', 'mail.qq.com',
+      'gmx.com', 'gmx.net', 'web.de', 'mail.163.com', 'mail.126.com',
+      'mail.yandex.com', 'yandex.com'
+    ];
+    
+    // Helper function to check if a domain is an email client
+    function isEmailClient(domainToCheck) {
+      // Direct match
+      if (emailDomains.includes(domainToCheck)) {
+        return true;
+      }
+      
+      // Check for subdomains of email services
+      for (const emailDomain of emailDomains) {
+        if (domainToCheck.endsWith(`.${emailDomain}`)) {
+          return true;
+        }
+      }
+      
+      // Check for common email client patterns
+      if (domainToCheck.includes('mail.') || 
+          domainToCheck.includes('email.') || 
+          domainToCheck.includes('webmail.') || 
+          domainToCheck.includes('outlook.') ||
+          domainToCheck.match(/mail\d*\.[a-z]+\.[a-z]+$/)) {
+        return true;
+      }
+      
+      return false;
+    }
+    
     // Helper function to check if a domain matches any in our mixed-content list
     function isMixedContentDomain(domainToCheck) {
       // Direct match
@@ -511,6 +651,22 @@ async function analyzeTab(title, url, domain, content = null) {
       }
       
       return false;
+    }
+    
+    // Special case: Email clients are always productive regardless of content
+    if (isEmailClient(domain)) {
+      console.log(`Domain ${domain} is an email client, automatically marking as productive`);
+      return {
+        isProductive: true,
+        score: 95,
+        categories: ['Work', 'Communication'],
+        explanation: 'Email clients are automatically marked as productive',
+        domainCategory: 'always-productive',
+        domainReason: 'Email clients are considered work tools',
+        domain: domain,
+        analysisSource: 'email-client-rule',
+        skipContentAnalysis: true
+      };
     }
     
     // For known mixed-content domains, skip domain categorization completely and go straight to content/title analysis
