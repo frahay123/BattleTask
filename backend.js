@@ -29,9 +29,95 @@ const validator = require('validator');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
+// API usage tracking
+const apiUsageStats = {
+  dailyCalls: 0,
+  titleAnalysisCalls: 0,
+  contentAnalysisCalls: 0,
+  domainCategorizationCalls: 0,
+  lastReset: new Date().toISOString().split('T')[0], // Today's date in YYYY-MM-DD format
+  resetTime: '00:00:00', // Reset time in UTC
+  errors: 0,
+  tokensUsed: 0, // Estimated token usage
+  // Keep daily history for the last 7 days
+  history: []
+};
+
+// Check and reset API usage stats if needed
+function checkAndResetApiStats() {
+  const today = new Date().toISOString().split('T')[0];
+  
+  // If it's a new day, reset counters
+  if (today !== apiUsageStats.lastReset) {
+    // Save previous day to history (limit to 7 days)
+    apiUsageStats.history.unshift({
+      date: apiUsageStats.lastReset,
+      dailyCalls: apiUsageStats.dailyCalls,
+      titleAnalysisCalls: apiUsageStats.titleAnalysisCalls,
+      contentAnalysisCalls: apiUsageStats.contentAnalysisCalls,
+      domainCategorizationCalls: apiUsageStats.domainCategorizationCalls,
+      errors: apiUsageStats.errors,
+      tokensUsed: apiUsageStats.tokensUsed
+    });
+    
+    // Keep only the last 7 days
+    if (apiUsageStats.history.length > 7) {
+      apiUsageStats.history = apiUsageStats.history.slice(0, 7);
+    }
+    
+    // Reset counters
+    apiUsageStats.dailyCalls = 0;
+    apiUsageStats.titleAnalysisCalls = 0;
+    apiUsageStats.contentAnalysisCalls = 0;
+    apiUsageStats.domainCategorizationCalls = 0;
+    apiUsageStats.errors = 0;
+    apiUsageStats.tokensUsed = 0;
+    apiUsageStats.lastReset = today;
+    
+    console.log(`API usage stats reset for new day: ${today}`);
+  }
+}
+
+// Middleware to track API usage
+function trackApiUsage(type) {
+  return (req, res, next) => {
+    // Check if stats should be reset
+    checkAndResetApiStats();
+    
+    // Increment counters
+    apiUsageStats.dailyCalls++;
+    
+    // Track specific type
+    switch(type) {
+      case 'title':
+        apiUsageStats.titleAnalysisCalls++;
+        // Rough estimate: 300 tokens for prompt + 50 for title
+        apiUsageStats.tokensUsed += 350;
+        break;
+      case 'content':
+        apiUsageStats.contentAnalysisCalls++;
+        // Rough estimate: 350 tokens for prompt + 2000 for content
+        apiUsageStats.tokensUsed += 2350;
+        break;
+      case 'domain':
+        apiUsageStats.domainCategorizationCalls++;
+        // Rough estimate: 250 tokens for prompt + 20 for domain
+        apiUsageStats.tokensUsed += 270;
+        break;
+    }
+    
+    next();
+  };
+}
+
 // Gemini API configuration
 const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
 const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
+
+// Simple domain categorization cache to reduce API calls
+const domainCategoryCache = new Map();
+// Cache expiration time: 7 days (in milliseconds)
+const CACHE_EXPIRATION = 7 * 24 * 60 * 60 * 1000;
 
 // Middleware
 app.use(cors());
@@ -60,39 +146,181 @@ const userLimiter = rateLimit({
 app.use('/api/', userLimiter);
 
 /**
- * Analyze a tab title to determine if it's productive content
+ * Get domain categorization - either from cache or by calling the API
+ * @param {string} domain - The domain to categorize
+ * @returns {Object} Domain categorization
  */
-async function analyzeTabTitle(title, url, domain) {
+async function getDomainCategory(domain) {
+  if (!domain) {
+    return {
+      category: 'unknown',
+      reason: 'No domain provided'
+    };
+  }
+  
+  // Check cache first
+  if (domainCategoryCache.has(domain)) {
+    const cachedResult = domainCategoryCache.get(domain);
+    // If cache entry is still valid (not expired)
+    if (Date.now() - cachedResult.timestamp < CACHE_EXPIRATION) {
+      return cachedResult;
+    }
+  }
+  
+  try {
+    // Create a special prompt specifically for domain categorization
+    const prompt = `
+Categorize this domain: "${domain}"
+
+Your task is to categorize this domain into one of three categories:
+1. "always-productive": Domain is used exclusively for work, education, or productivity tools
+2. "always-nonproductive": Domain is used exclusively for entertainment, social media, or shopping
+3. "context-dependent": Domain can be both productive and non-productive depending on specific content
+
+You must choose ONLY ONE category. Avoid choosing "context-dependent" unless it's absolutely necessary.
+
+Return ONLY a JSON object with these fields:
+- category: one of the three categories above
+- reason: brief explanation for this categorization (1-2 sentences)
+- urlPatterns: for context-dependent domains only, a list of URL patterns that would indicate productive vs non-productive content
+`;
+
+    // Make request to Gemini API
+    const result = await model.generateContent(prompt);
+    const responseText = result.response.text();
+
+    // Extract JSON
+    let jsonText = responseText;
+    if (responseText.includes('```json')) {
+      jsonText = responseText.split('```json')[1].split('```')[0].trim();
+    } else if (responseText.includes('```')) {
+      jsonText = responseText.split('```')[1].split('```')[0].trim();
+    }
+    
+    const jsonMatch = jsonText.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) {
+      throw new Error('Failed to parse JSON response from AI model');
+    }
+    
+    const analysis = JSON.parse(jsonMatch[0]);
+    
+    // Validate the response
+    if (!analysis.category || !['always-productive', 'always-nonproductive', 'context-dependent'].includes(analysis.category)) {
+      throw new Error('Invalid category in AI response');
+    }
+    
+    // Add timestamp and domain for reference
+    analysis.timestamp = Date.now();
+    analysis.domain = domain;
+    
+    // Store in cache
+    domainCategoryCache.set(domain, analysis);
+    
+    return analysis;
+  } catch (error) {
+    console.error('Error getting domain category:', error);
+    // Increment error counter
+    apiUsageStats.errors++;
+    
+    // Return a default value for error cases
+    return {
+      category: 'context-dependent',
+      reason: 'Error during domain categorization',
+      timestamp: Date.now(),
+      domain: domain
+    };
+  }
+}
+
+/**
+ * Unified analysis function that prioritizes domain categorization
+ * @param {string} title - The title of the page
+ * @param {string} url - The URL of the page
+ * @param {string} domain - The domain of the page
+ * @param {string|null} content - The content to analyze (optional)
+ * @returns {Object} Analysis result
+ */
+async function analyzeTab(title, url, domain, content = null) {
+  // Handle empty or new tabs
   if (!title || title.trim() === '' || title === 'New Tab') {
     return {
       isProductive: false,
       score: 0,
       categories: [],
-      explanation: '',
+      explanation: 'Empty or new tab',
       domainCategory: 'unknown',
-      domainReason: 'Empty or new tab'
+      domainReason: 'Empty or new tab',
+      domain: domain
     };
   }
 
   try {
-    // Create prompt for Gemini with emphasis on domain categorization
+    // First, get domain categorization
+    const domainCategorization = await getDomainCategory(domain);
+    
+    // If domain is definitively categorized, we may not need content analysis
+    if (domainCategorization.category === 'always-productive') {
+      return {
+        isProductive: true,
+        score: 90,
+        categories: [],
+        explanation: `Domain ${domain} is categorized as always productive: ${domainCategorization.reason}`,
+        domainCategory: 'always-productive',
+        domainReason: domainCategorization.reason,
+        domain: domain
+      };
+    } else if (domainCategorization.category === 'always-nonproductive') {
+      return {
+        isProductive: false,
+        score: 10,
+        categories: [],
+        explanation: `Domain ${domain} is categorized as always non-productive: ${domainCategorization.reason}`,
+        domainCategory: 'always-nonproductive',
+        domainReason: domainCategorization.reason,
+        domain: domain
+      };
+    }
+    
+    // For context-dependent domains, analyze content if available, otherwise analyze title
+    if (content && content.trim() !== '') {
+      return await analyzeContentWithDomainInfo(title, content, url, domain, domainCategorization);
+    } else {
+      return await analyzeTitleWithDomainInfo(title, url, domain, domainCategorization);
+    }
+  } catch (error) {
+    console.error('Error in unified analysis:', error);
+    
+    // Increment error counter
+    apiUsageStats.errors++;
+    
+    return {
+      isProductive: false,
+      score: 0,
+      categories: [],
+      explanation: 'Error during analysis',
+      domainCategory: 'context-dependent',
+      domainReason: 'Unable to categorize due to analysis error',
+      domain: domain
+    };
+  }
+}
+
+/**
+ * Analyze a tab title with pre-existing domain information
+ */
+async function analyzeTitleWithDomainInfo(title, url, domain, domainInfo) {
+  try {
+    // Create prompt for Gemini WITHOUT domain categorization request
     const prompt = `
 Classify tab: "${title}" (URL: ${url}, Domain: ${domain})
+
+Note: This domain is already categorized as "${domainInfo.category}" because: "${domainInfo.reason}"
 
 Return JSON:
 - isProductive (bool)
 - score (0-100)
 - categories (array)
 - explanation (string)
-- domainCategory (string, must be one of: "always-productive", "always-nonproductive", "context-dependent")
-- domainReason (string)
-
-domainCategory explanation:
-- "always-productive": Domain is used exclusively for work/education (github, docs.google)
-- "always-nonproductive": Domain is exclusively for entertainment/social/shopping (netflix, instagram)
-- "context-dependent": Domain can be both productive and non-productive (youtube, reddit)
-
-NOTE: Domain categorization is CRITICAL. Be decisive about domainCategory - avoid "context-dependent" unless truly necessary.
 
 Productive if:
 1. Educational content
@@ -105,18 +333,18 @@ Productive if:
 
     // Make request to Gemini API
     const result = await model.generateContent(prompt);
-    const response = result.response;
-    let responseText = response.text();
+    const responseText = result.response.text();
 
-    // Check if the response is valid JSON by removing markdown formatting if present
+    // Extract JSON
+    let jsonText = responseText;
     if (responseText.includes('```json')) {
-      responseText = responseText.split('```json')[1].split('```')[0].trim();
+      jsonText = responseText.split('```json')[1].split('```')[0].trim();
     } else if (responseText.includes('```')) {
-      responseText = responseText.split('```')[1].split('```')[0].trim();
+      jsonText = responseText.split('```')[1].split('```')[0].trim();
     }
-
+    
     // Parse the JSON response
-    const analysis = JSON.parse(responseText);
+    const analysis = JSON.parse(jsonText);
 
     // Ensure required fields exist
     if (!analysis.isProductive) analysis.isProductive = false;
@@ -141,96 +369,45 @@ Productive if:
     if (!analysis.categories) analysis.categories = [];
     if (!analysis.explanation) analysis.explanation = '';
     
-    // Strengthen domain categorization
-    if (!analysis.domainCategory || !['always-productive', 'always-nonproductive', 'context-dependent'].includes(analysis.domainCategory)) {
-      // Force a domainCategory based on score if missing
-      if (analysis.score >= 80) {
-        analysis.domainCategory = 'always-productive';
-        analysis.domainReason = 'High productivity score indicates this domain is primarily for productive activities';
-      } else if (analysis.score <= 20) {
-        analysis.domainCategory = 'always-nonproductive';
-        analysis.domainReason = 'Low productivity score indicates this domain is primarily for non-productive activities';
-      } else {
-        analysis.domainCategory = 'context-dependent';
-        analysis.domainReason = 'Domain contains mixed content that may be productive or non-productive depending on context';
-      }
-    }
-
-    // Attach original domain to response for reference
+    // Use the pre-existing domain info
+    analysis.domainCategory = domainInfo.category;
+    analysis.domainReason = domainInfo.reason;
+    
+    // Attach domain for reference
     analysis.domain = domain;
 
     return analysis;
   } catch (error) {
-    console.error('Error analyzing title:', error);
+    console.error('Error analyzing title with domain info:', error);
+    
+    // Increment error counter
+    apiUsageStats.errors++;
+    
     return {
       isProductive: false,
       score: 0,
       categories: [],
-      explanation: 'Error during analysis',
-      domainCategory: 'context-dependent',
-      domainReason: 'Unable to categorize domain due to analysis error',
+      explanation: 'Error during title analysis',
+      domainCategory: domainInfo.category,
+      domainReason: domainInfo.reason,
       domain: domain
     };
   }
 }
 
-// Analyze content directly from the frontend or browser extension
-app.post('/api/analyze-content', async (req, res) => {
-  try {
-    const { title, url, content } = req.body;
-    
-    if (!title || !content) {
-      return res.status(400).json({ success: false, error: 'Title and content are required' });
-    }
-    
-    // Sanitize inputs
-    const cleanTitle = validator.escape(title);
-    
-    // Extract domain
-    const domain = url ? extractDomain(url) : '';
-    
-    // Analyze the content for productive status
-    const analysis = await analyzeContent(cleanTitle, content, url || '', domain);
-    
-    res.json({
-      success: true,
-      ...analysis
-    });
-  } catch (error) {
-    console.error('Error analyzing content:', error);
-    res.status(500).json({ success: false, error: 'Internal server error. Please try again later.' });
-  }
-});
-
 /**
- * Analyze content to determine if it's productive
- * @param {string} title - The title of the page
- * @param {string} content - The content to analyze
- * @param {string} url - The URL of the page
- * @param {string} domain - The domain of the page
- * @returns {Object} Analysis result
+ * Analyze content with pre-existing domain information
  */
-async function analyzeContent(title, content, url = '', domain = '') {
+async function analyzeContentWithDomainInfo(title, content, url = '', domain = '', domainInfo) {
   try {
-    if (!title || !content) {
-      console.error("Missing title or content for analysis");
-      return {
-        isProductive: false,
-        score: 0,
-        categories: [],
-        explanation: "Unable to analyze: Missing title or content",
-        domainCategory: "unknown",
-        domainReason: "Insufficient data for domain categorization",
-        domain: domain
-      };
-    }
-
     // Limit content length to avoid token limits
     const truncatedContent = content.substring(0, 2000);
     
-    // Create prompt for the model with emphasis on domain categorization
+    // Create prompt for the model WITHOUT domain categorization request
     const prompt = `
 Analyze: "${title}" (URL: ${url}, Domain: ${domain})
+
+Note: This domain is already categorized as "${domainInfo.category}" because: "${domainInfo.reason}"
 
 Content snippet:
 """
@@ -242,75 +419,67 @@ Return JSON:
 - score (0-1)
 - categories (array)
 - explanation (string)
-- domainCategory (string, must be one of: "always-productive", "always-nonproductive", "context-dependent")
-- domainReason (string)
-
-domainCategory explanation:
-- "always-productive": Domain is used exclusively for work/education (github, docs.google)
-- "always-nonproductive": Domain is exclusively for entertainment/social/shopping (netflix, instagram)
-- "context-dependent": Domain can be both productive and non-productive (youtube, reddit)
-
-NOTE: Domain categorization is CRITICAL. Be decisive about domainCategory - avoid "context-dependent" unless truly necessary.
     `;
 
     // Call the Gemini API
     const result = await model.generateContent(prompt);
-
-    try {
-      const responseText = result.response.text();
-      // Extract JSON from the response
-      const jsonMatch = responseText.match(/\{[\s\S]*\}/);
+    const responseText = result.response.text();
+    
+    // Extract JSON
+    let jsonText = responseText;
+    if (responseText.includes('```json')) {
+      jsonText = responseText.split('```json')[1].split('```')[0].trim();
+    } else if (responseText.includes('```')) {
+      jsonText = responseText.split('```')[1].split('```')[0].trim();
+    }
+    
+    const jsonMatch = jsonText.match(/\{[\s\S]*\}/);
+    
+    if (jsonMatch) {
+      const analysisResult = JSON.parse(jsonMatch[0]);
       
-      if (jsonMatch) {
-        const analysisResult = JSON.parse(jsonMatch[0]);
-        
-        // Normalize the score to 0-100 range if it's in 0-1
-        let score = analysisResult.score || 0;
-        if (score <= 1 && score >= 0) {
-          score = Math.round(score * 100);
-        } else {
-          score = Math.min(100, Math.max(0, score));
-        }
-        
-        const result = {
-          isProductive: analysisResult.isProductive || false,
-          score: score,
-          categories: analysisResult.categories || [],
-          explanation: analysisResult.explanation || "No explanation provided",
-          domainCategory: analysisResult.domainCategory || "unknown",
-          domainReason: analysisResult.domainReason || "No domain categorization reason provided",
-          domain: domain
-        };
-        
-        // Strengthen domain categorization if missing or invalid
-        if (!result.domainCategory || !['always-productive', 'always-nonproductive', 'context-dependent'].includes(result.domainCategory)) {
-          // Force a domainCategory based on score if missing
-          if (result.score >= 80) {
-            result.domainCategory = 'always-productive';
-            result.domainReason = 'High productivity score based on content analysis indicates this domain is primarily for productive activities';
-          } else if (result.score <= 20) {
-            result.domainCategory = 'always-nonproductive';
-            result.domainReason = 'Low productivity score based on content analysis indicates this domain is primarily for non-productive activities';
-          } else {
-            result.domainCategory = 'context-dependent';
-            result.domainReason = 'Content analysis shows this domain contains mixed content that may be productive or non-productive depending on context';
-          }
-        }
-        
-        return result;
+      // Normalize the score to 0-100 range if it's in 0-1
+      let score = analysisResult.score || 0;
+      if (score <= 1 && score >= 0) {
+        score = Math.round(score * 100);
       } else {
-        throw new Error("Failed to extract JSON from API response");
+        score = Math.min(100, Math.max(0, score));
       }
-    } catch (parseError) {
-      console.error("Error parsing content analysis result:", parseError);
-      // Fall back to title-only analysis
-      return await analyzeTabTitle(title, url, domain);
+      
+      const result = {
+        isProductive: analysisResult.isProductive || false,
+        score: score,
+        categories: analysisResult.categories || [],
+        explanation: analysisResult.explanation || "No explanation provided",
+        domainCategory: domainInfo.category,
+        domainReason: domainInfo.reason,
+        domain: domain
+      };
+      
+      return result;
+    } else {
+      throw new Error("Failed to extract JSON from API response");
     }
   } catch (error) {
-    console.error("Error in content analysis:", error);
-    // Fall back to title-only analysis as a backup
-    return await analyzeTabTitle(title, url, domain);
+    console.error("Error in content analysis with domain info:", error);
+    
+    // Increment error counter
+    apiUsageStats.errors++;
+    
+    // Fall back to title-only analysis
+    return await analyzeTitleWithDomainInfo(title, url, domain, domainInfo);
   }
+}
+
+// Original functions preserved for backward compatibility
+async function analyzeTabTitle(title, url, domain) {
+  // Use the new unified approach
+  return await analyzeTab(title, url, domain);
+}
+
+async function analyzeContent(title, content, url = '', domain = '') {
+  // Use the new unified approach
+  return await analyzeTab(title, url, domain, content);
 }
 
 // API Routes
@@ -325,8 +494,19 @@ app.get('/', (req, res) => {
   });
 });
 
+// API usage statistics endpoint
+app.get('/api/usage-stats', (req, res) => {
+  // Check if stats should be reset
+  checkAndResetApiStats();
+  
+  res.json({
+    success: true,
+    stats: apiUsageStats
+  });
+});
+
 // Save tab data and analyze productive content
-app.post('/api/tabs', async (req, res) => {
+app.post('/api/tabs', trackApiUsage('title'), async (req, res) => {
   try {
     const { windowId, tab } = req.body;
 
@@ -343,9 +523,10 @@ app.post('/api/tabs', async (req, res) => {
     // Extract domain
     const domain = extractDomain(tab.url);
 
-    // Analyze the tab title for productive content
-    const analysis = await analyzeTabTitle(cleanTitle, tab.url, domain);
+    // Use the unified analyze function
+    const analysis = await analyzeTab(cleanTitle, tab.url, domain);
     
+    // Include API usage statistics in response
     res.json({ 
       success: true, 
       id: tab.id, 
@@ -356,16 +537,21 @@ app.post('/api/tabs', async (req, res) => {
         explanation: analysis.explanation,
         domainCategory: analysis.domainCategory,
         domainReason: analysis.domainReason
+      },
+      apiUsage: {
+        dailyCalls: apiUsageStats.dailyCalls,
+        lastReset: apiUsageStats.lastReset
       }
     });
   } catch (error) {
     console.error('Error processing tab data:', error);
+    apiUsageStats.errors++;
     res.status(500).json({ success: false, error: 'Internal server error. Please try again later.' });
   }
 });
 
 // Analyze a title directly from the frontend
-app.post('/api/analyze-title', async (req, res) => {
+app.post('/api/analyze-title', trackApiUsage('title'), async (req, res) => {
   try {
     const { title, url, domain } = req.body;
     
@@ -378,14 +564,53 @@ app.post('/api/analyze-title', async (req, res) => {
     // Use the provided domain or extract it from URL
     const extractedDomain = domain || (url ? extractDomain(url) : '');
     
-    const analysis = await analyzeTabTitle(cleanTitle, url || '', extractedDomain);
+    // Use the unified analyze function
+    const analysis = await analyzeTab(cleanTitle, url || '', extractedDomain);
     
     res.json({
       success: true,
-      ...analysis
+      ...analysis,
+      apiUsage: {
+        dailyCalls: apiUsageStats.dailyCalls,
+        lastReset: apiUsageStats.lastReset
+      }
     });
   } catch (error) {
     console.error('Error analyzing title:', error);
+    apiUsageStats.errors++;
+    res.status(500).json({ success: false, error: 'Internal server error. Please try again later.' });
+  }
+});
+
+// Analyze content directly from the frontend or browser extension
+app.post('/api/analyze-content', trackApiUsage('content'), async (req, res) => {
+  try {
+    const { title, url, content } = req.body;
+    
+    if (!title || !content) {
+      return res.status(400).json({ success: false, error: 'Title and content are required' });
+    }
+    
+    // Sanitize inputs
+    const cleanTitle = validator.escape(title);
+    
+    // Extract domain
+    const domain = url ? extractDomain(url) : '';
+    
+    // Use the unified analyze function with content
+    const analysis = await analyzeTab(cleanTitle, url || '', domain, content);
+    
+    res.json({
+      success: true,
+      ...analysis,
+      apiUsage: {
+        dailyCalls: apiUsageStats.dailyCalls,
+        lastReset: apiUsageStats.lastReset
+      }
+    });
+  } catch (error) {
+    console.error('Error analyzing content:', error);
+    apiUsageStats.errors++;
     res.status(500).json({ success: false, error: 'Internal server error. Please try again later.' });
   }
 });
@@ -416,7 +641,7 @@ function extractDomain(url) {
 }
 
 // Add a domain categorization API endpoint
-app.post('/api/domain-category', async (req, res) => {
+app.post('/api/domain-category', trackApiUsage('domain'), async (req, res) => {
   try {
     const { domain } = req.body;
     
@@ -424,60 +649,27 @@ app.post('/api/domain-category', async (req, res) => {
       return res.status(400).json({ success: false, error: 'Domain parameter is required' });
     }
     
-    // Create a special prompt specifically for domain categorization
-    const prompt = `
-Categorize this domain: "${domain}"
-
-Your task is to categorize this domain into one of three categories:
-1. "always-productive": Domain is used exclusively for work, education, or productivity tools
-2. "always-nonproductive": Domain is used exclusively for entertainment, social media, or shopping
-3. "context-dependent": Domain can be both productive and non-productive depending on specific content
-
-You must choose ONLY ONE category. Avoid choosing "context-dependent" unless it's absolutely necessary.
-
-Return ONLY a JSON object with these fields:
-- category: one of the three categories above
-- reason: brief explanation for this categorization (1-2 sentences)
-- urlPatterns: for context-dependent domains only, a list of URL patterns that would indicate productive vs non-productive content
-`;
-
-    // Make request to Gemini API
-    const result = await model.generateContent(prompt);
-    const response = result.response;
-    let responseText = response.text();
-
-    // Check if the response is valid JSON by removing markdown formatting if present
-    if (responseText.includes('```json')) {
-      responseText = responseText.split('```json')[1].split('```')[0].trim();
-    } else if (responseText.includes('```')) {
-      responseText = responseText.split('```')[1].split('```')[0].trim();
-    }
-
-    // Extract JSON 
-    const jsonMatch = responseText.match(/\{[\s\S]*\}/);
-    if (!jsonMatch) {
-      throw new Error('Failed to parse JSON response from AI model');
-    }
-    
-    const analysis = JSON.parse(jsonMatch[0]);
-    
-    // Validate the response
-    if (!analysis.category || !['always-productive', 'always-nonproductive', 'context-dependent'].includes(analysis.category)) {
-      throw new Error('Invalid category in AI response');
-    }
-    
-    // Add timestamp for freshness tracking
-    analysis.timestamp = new Date().toISOString();
-    analysis.domain = domain;
+    // Use the getDomainCategory function
+    const categorization = await getDomainCategory(domain);
     
     // Return the categorization
     res.json({
       success: true,
       domain: domain,
-      categorization: analysis
+      categorization: {
+        category: categorization.category,
+        reason: categorization.reason,
+        urlPatterns: categorization.urlPatterns,
+        timestamp: new Date(categorization.timestamp).toISOString()
+      },
+      apiUsage: {
+        dailyCalls: apiUsageStats.dailyCalls,
+        lastReset: apiUsageStats.lastReset
+      }
     });
   } catch (error) {
     console.error('Error categorizing domain:', error);
+    apiUsageStats.errors++;
     res.status(500).json({ success: false, error: 'Internal server error. Please try again later.' });
   }
 });
