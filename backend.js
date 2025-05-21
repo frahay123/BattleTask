@@ -118,6 +118,8 @@ const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
 const domainCategoryCache = new Map();
 // Cache expiration time: 7 days (in milliseconds)
 const CACHE_EXPIRATION = 7 * 24 * 60 * 60 * 1000;
+// Cache expiration for error or forced context-dependent results: 1 day
+const ERROR_CACHE_EXPIRATION = 24 * 60 * 60 * 1000;
 
 // Middleware
 app.use(cors());
@@ -145,6 +147,17 @@ const userLimiter = rateLimit({
 });
 app.use('/api/', userLimiter);
 
+// Clear any cached classification for YouTube and other problematic domains
+// This prevents incorrect "always-nonproductive" classification from persisting
+console.log('Clearing YouTube and problematic domains from cache on startup');
+const domainsToReset = ['youtube.com', 'youtu.be', 'reddit.com', 'twitter.com'];
+domainsToReset.forEach(domain => {
+  if (domainCategoryCache.has(domain)) {
+    console.log(`Removing ${domain} from domain classification cache`);
+    domainCategoryCache.delete(domain);
+  }
+});
+
 /**
  * Get domain categorization - either from cache or by calling the API
  * @param {string} domain - The domain to categorize
@@ -162,12 +175,21 @@ async function getDomainCategory(domain) {
   // Check cache first
   if (domainCategoryCache.has(domain)) {
     const cachedResult = domainCategoryCache.get(domain);
+    
+    // Use different expiration times for different types of cached results
+    const expirationTime = (cachedResult.forcedClassification || 
+                          cachedResult.reason?.includes('Error during domain categorization')) 
+                          ? ERROR_CACHE_EXPIRATION : CACHE_EXPIRATION;
+    
     // If cache entry is still valid (not expired)
-    if (Date.now() - cachedResult.timestamp < CACHE_EXPIRATION) {
+    if (Date.now() - cachedResult.timestamp < expirationTime) {
       console.log(`Domain ${domain} categorization found in cache: ${cachedResult.category}`);
+      console.log(`Cache type: ${cachedResult.forcedClassification ? 'forced' : 
+                 (cachedResult.reason?.includes('Error') ? 'error' : 'normal')}`);
       return cachedResult;
     } else {
       console.log(`Domain ${domain} found in cache but expired, will recategorize`);
+      console.log(`Cache expired after ${Math.round((Date.now() - cachedResult.timestamp) / (1000 * 60 * 60))} hours`);
     }
   } else {
     console.log(`Domain ${domain} not in cache, will categorize via API`);
@@ -177,7 +199,33 @@ async function getDomainCategory(domain) {
     console.log(`Generating domain categorization for ${domain} using Gemini API`);
     
     // Create a compact prompt for domain categorization to minimize token usage
-    const prompt = `Categorize domain "${domain}" as one of: "always-productive" (work/education), "always-nonproductive" (entertainment/social), or "context-dependent" (varies by content). Avoid "context-dependent" unless necessary.
+    // Check if this is a known mixed-content domain that should always be context-dependent
+    const knownMixedContentDomains = [
+      'youtube.com', 'youtu.be', 'reddit.com', 'twitter.com', 'x.com', 
+      'linkedin.com', 'medium.com', 'quora.com', 'ted.com', 'vimeo.com',
+      'nytimes.com', 'wsj.com', 'cnn.com', 'bbc.com', 'bbc.co.uk',
+      'theguardian.com', 'reuters.com', 'bloomberg.com', 'forbes.com',
+      'news.yahoo.com', 'news.google.com', 'flipboard.com'
+    ];
+    
+    if (knownMixedContentDomains.includes(domain) || 
+        knownMixedContentDomains.some(d => domain.endsWith(`.${d}`))) {
+      console.log(`Domain ${domain} is a known mixed-content site, forcing context-dependent classification`);
+      const forcedResult = {
+        category: 'context-dependent',
+        reason: 'This site contains both productive and non-productive content that varies by specific usage',
+        timestamp: Date.now(),
+        domain: domain,
+        forcedClassification: true
+      };
+      
+      // Cache with shorter expiration for forced classifications
+      domainCategoryCache.set(domain, forcedResult);
+      
+      return forcedResult;
+    }
+    
+    const prompt = `Categorize domain "${domain}" as one of: "always-productive" (work/education), "always-nonproductive" (entertainment/social), or "context-dependent" (varies by content). For video sites, news sites, or social media, ALWAYS use "context-dependent" as they can contain both educational and entertainment content. Use "context-dependent" whenever there's doubt.
 Return only JSON:
 {"category":"category_name","reason":"brief reason","urlPatterns":["pattern1","pattern2"]}
 `;
@@ -220,17 +268,32 @@ Return only JSON:
     // Increment error counter
     apiUsageStats.errors++;
     
-    // Return a default value for error cases
+    // For error cases, we want to be more cautious about classification
+    // Check if this domain is likely to be a mixed content domain based on keywords
+    const domainLower = domain.toLowerCase();
+    const likelyMixedContent = 
+      domainLower.includes('tube') || 
+      domainLower.includes('video') || 
+      domainLower.includes('news') || 
+      domainLower.includes('social') || 
+      domainLower.includes('media') || 
+      domainLower.includes('edu') || 
+      domainLower.includes('learn') || 
+      domainLower.includes('forum') || 
+      domainLower.includes('community') || 
+      domainLower.includes('watch');
+    
+    // Return a default value for error cases - always use context-dependent when in doubt
     const defaultResult = {
       category: 'context-dependent',
-      reason: 'Error during domain categorization: ' + error.message,
+      reason: `Error during domain categorization: ${error.message}. Using context-dependent to allow content-specific analysis.`,
       timestamp: Date.now(),
       domain: domain
     };
     
-    // Still cache this result to avoid repeated API failures for the same domain
+    // Cache error result with a shorter expiration (1 day) to force retry sooner
     domainCategoryCache.set(domain, defaultResult);
-    console.log(`Error categorizing domain ${domain}, using default context-dependent and caching to prevent repeated errors`);
+    console.log(`Error categorizing domain ${domain}, using default context-dependent and caching to prevent repeated errors. Likely mixed content: ${likelyMixedContent}`);
     
     return defaultResult;
   }
