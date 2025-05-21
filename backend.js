@@ -176,21 +176,10 @@ async function getDomainCategory(domain) {
   try {
     console.log(`Generating domain categorization for ${domain} using Gemini API`);
     
-    // Create a special prompt specifically for domain categorization
-    const prompt = `
-Categorize this domain: "${domain}"
-
-Your task is to categorize this domain into one of three categories:
-1. "always-productive": Domain is used exclusively for work, education, or productivity tools
-2. "always-nonproductive": Domain is used exclusively for entertainment, social media, or shopping
-3. "context-dependent": Domain can be both productive and non-productive depending on specific content
-
-You must choose ONLY ONE category. Avoid choosing "context-dependent" unless it's absolutely necessary.
-
-Return ONLY a JSON object with these fields:
-- category: one of the three categories above
-- reason: brief explanation for this categorization (1-2 sentences)
-- urlPatterns: for context-dependent domains only, a list of URL patterns that would indicate productive vs non-productive content
+    // Create a compact prompt for domain categorization to minimize token usage
+    const prompt = `Categorize domain "${domain}" as one of: "always-productive" (work/education), "always-nonproductive" (entertainment/social), or "context-dependent" (varies by content). Avoid "context-dependent" unless necessary.
+Return only JSON:
+{"category":"category_name","reason":"brief reason","urlPatterns":["pattern1","pattern2"]}
 `;
 
     // Make request to Gemini API
@@ -339,26 +328,11 @@ async function analyzeTitleWithDomainInfo(title, url, domain, domainInfo) {
   try {
     console.log(`Analyzing title for context-dependent domain ${domain}: "${title}"`);
     
-    // Create prompt for Gemini WITHOUT domain categorization request
-    const prompt = `
-Classify tab: "${title}" (URL: ${url}, Domain: ${domain})
-
-Note: This domain is already categorized as "${domainInfo.category}" because: "${domainInfo.reason}"
-
-Return JSON:
-- isProductive (bool)
-- score (0-100)
-- categories (array)
-- explanation (string)
-
-Productive if:
-1. Educational content
-2. Professional development
-3. Work tools
-4. Research
-5. Productivity tools
-6. Email
-    `;
+    // Create compact title analysis prompt to minimize token usage
+    const prompt = `Classify: "${title}" (URL: ${url})
+Domain ${domain} is "${domainInfo.category}": "${domainInfo.reason}"
+Return only JSON: {"isProductive":true/false,"score":0-100,"categories":[],"explanation":"reason"}
+Productive = educational/work/research/productivity content`;
 
     // Make request to Gemini API
     const result = await model.generateContent(prompt);
@@ -440,23 +414,12 @@ async function analyzeContentWithDomainInfo(title, content, url = '', domain = '
     // Limit content length to avoid token limits
     const truncatedContent = content.substring(0, 2000);
     
-    // Create prompt for the model WITHOUT domain categorization request
-    const prompt = `
-Analyze: "${title}" (URL: ${url}, Domain: ${domain})
-
-Note: This domain is already categorized as "${domainInfo.category}" because: "${domainInfo.reason}"
-
-Content snippet:
-"""
-${truncatedContent}
-"""
-
-Return JSON:
-- isProductive (bool)
-- score (0-1)
-- categories (array)
-- explanation (string)
-    `;
+    // Create compact content analysis prompt to minimize token usage
+    const prompt = `Analyze: "${title}" (URL: ${url})
+Domain ${domain} is "${domainInfo.category}": "${domainInfo.reason}"
+Content: """${truncatedContent}"""
+Return only JSON: {"isProductive":true/false,"score":0-1,"categories":[],"explanation":"reason"}
+Productive = educational/work/research/productivity content`;
 
     // Call the Gemini API
     const result = await model.generateContent(prompt);
