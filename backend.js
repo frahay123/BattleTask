@@ -10,6 +10,9 @@
 require('dotenv').config();
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 
+// Domain classification cache (can be replaced with DB later)
+const domainCache = {};
+
 // Check if API key is available
 if (!GEMINI_API_KEY) {
   console.error('WARNING: GEMINI_API_KEY is not set in environment variables');
@@ -142,6 +145,49 @@ async function analyzeTabTitle(title) {
   }
 }
 
+async function classifyDomainWithGemini(domain) {
+  const prompt = `
+    Given the domain: "${domain}"
+
+    Classify its overall productivity category. Choose one of:
+    - always_productive
+    - always_unproductive
+    - ambiguous
+
+    Definitions:
+    - "always_productive": This domain mostly contains educational, work, or research content (e.g. leetcode.com).
+    - "always_unproductive": This domain mostly contains entertainment, distractions, or unrelated content (e.g. netflix.com).
+    - "ambiguous": This domain hosts both productive and unproductive content depending on the page (e.g. youtube.com).
+
+    Return only:
+    {
+      "domain": "${domain}",
+      "classification": "ambiguous",
+      "reason": "Contains both educational videos and entertainment"
+    }
+  `;
+
+  try {
+    const result = await model.generateContent(prompt);
+    const responseText = result.response.text();
+
+    let jsonText = responseText;
+    if (jsonText.includes('```json')) {
+      jsonText = jsonText.split('```json')[1].split('```')[0].trim();
+    } else if (jsonText.includes('```')) {
+      jsonText = jsonText.split('```')[1].split('```')[0].trim();
+    }
+
+    const parsed = JSON.parse(jsonText);
+    if (parsed && parsed.classification) {
+      return parsed.classification;
+    }
+  } catch (err) {
+    console.error('Error classifying domain:', err);
+  }
+  return 'ambiguous'; // default fallback
+}
+
 // API Routes
 
 // Health check endpoint
@@ -162,19 +208,54 @@ app.post('/api/tabs', async (req, res) => {
     if (!tab || !tab.title || !tab.id || !tab.url) {
       return res.status(400).json({ success: false, error: 'Tab data is required' });
     }
-    // Validate URL
+
     if (!validator.isURL(tab.url, { require_protocol: true })) {
       return res.status(400).json({ success: false, error: 'Invalid URL' });
     }
-    // Sanitize title
-    const cleanTitle = validator.escape(tab.title);
 
-    // Analyze the tab title for productive content
+    const cleanTitle = validator.escape(tab.title);
+    const domain = new URL(tab.url).hostname.replace(/^www\./, '');
+
+    // Check cached domain classification
+    let classification = domainCache[domain];
+
+    if (!classification) {
+      classification = await classifyDomainWithGemini(domain);
+      domainCache[domain] = classification;
+    }
+
+    if (classification === 'always_productive') {
+      return res.json({
+        success: true,
+        id: tab.id,
+        analysis: {
+          isProductive: true,
+          score: 100,
+          categories: ['domain'],
+          explanation: 'Classified as always productive by domain'
+        }
+      });
+    }
+
+    if (classification === 'always_unproductive') {
+      return res.json({
+        success: true,
+        id: tab.id,
+        analysis: {
+          isProductive: false,
+          score: 0,
+          categories: ['domain'],
+          explanation: 'Classified as always unproductive by domain'
+        }
+      });
+    }
+
+    // Otherwise, ambiguous — analyze title
     const analysis = await analyzeTabTitle(cleanTitle);
-    
-    res.json({ 
-      success: true, 
-      id: tab.id, 
+
+    res.json({
+      success: true,
+      id: tab.id,
       analysis: {
         isProductive: analysis.isProductive,
         score: analysis.score,
