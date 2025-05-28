@@ -79,23 +79,21 @@ async function analyzeTabTitle(title, url = '') {
         Analyze this YouTube video title: "${title}"
 
         Classify strictly as "productive" or "unproductive".
-        Provide a concise explanation.
+
         Assign a score (0-100).
-        List relevant categories (1-3 words each).
+      
 
         RETURN JSON ONLY:
         {
           "isProductive": boolean, // true if productive
           "score": number, // 0-100
-          "categories": ["string"],
-          "explanation": "string"
         }
 
         CRITICAL RULES FOR "productive" (score 75-100):
         1. Title indicates: Lectures, tutorials, documentaries, academic lessons (math, science, history, programming, languages, etc.), how-to guides.
         
         If title matches CRITICAL RULES, it IS "productive".
-        Titles suggesting primarily entertainment are "unproductive".
+        Titles suggesting primarily,tech,sports,vlogs entertainment are "unproductive".
       `;
       
       // Make request to Gemini API
@@ -109,27 +107,18 @@ async function analyzeTabTitle(title, url = '') {
       Analyze this tab title: "${title}"
       ${url ? `Associated URL (for context): ${url}` : ''}
 
-      Classify strictly as "productive" or "unproductive".
-      Provide a concise explanation.
+      Classify strictly as "productive" or "unproductive" think about it. 
       Assign a score (0-100).
-      List relevant categories (1-3 words each).
 
       RETURN JSON ONLY:
       {
         "isProductive": boolean, // true if productive
         "score": number, // 0-100
-        "categories": ["string"],
-        "explanation": "string"
       }
 
-      GUIDELINES FOR "productive" (score generally 60-100):
-      1. Educational: Learning materials, articles on academic/technical subjects.
-      2. Professional: Work-related tools, industry news, documentation, skill development.
-      3. Informative: In-depth news analysis, research papers, well-structured information.
-      4. Task-Oriented: Titles indicating email, project management, coding platforms.
+      GUIDELINES FOR "productive" (score generally 60-100): Educational, Professional,Informative,Task-Oriented for work
       
       Titles suggesting purely entertainment, social media feeds, clickbait, or superficial content are "unproductive".
-      If "email" is explicitly in the title, classify as productive.
     `;
 
     // Make request to Gemini API
@@ -471,23 +460,18 @@ app.post('/api/classify-domain', async (req, res) => {
       Analyze the domain: "${domain}"
 
       Classify it STRICTLY as one of the following:
+      ONLY CHOOSE "ambiguous" when absolutely necessary 
       - "always_productive"
       - "always_unproductive"
       - "ambiguous"
 
-      Provide a brief justification.
+  
 
       Return JSON ONLY:
       {
         "classification": "chosen_classification",
-        "justification": "brief_reason"
       }
 
-      Examples:
-      Domain: "github.com" -> {"classification": "always_productive", "justification": "Primarily for software development and version control."}
-      Domain: "youtube.com" -> {"classification": "ambiguous", "justification": "Hosts both highly educational and purely entertainment content."}
-      Domain: "tiktok.com" -> {"classification": "always_unproductive", "justification": "Primarily short-form entertainment."}
-      Domain: "wikipedia.org" -> {"classification": "always_productive", "justification": "Online encyclopedia, educational resource."}
     `;
     
     // Use the same gemini model for classification
@@ -551,16 +535,12 @@ app.post('/api/analyze-content-gemini', async (req, res) => {
         Content Snippet: ${content ? content.substring(0, 1000) : 'N/A'}
 
         Classify strictly as "productive" or "unproductive".
-        Provide a concise explanation.
         Assign a score (0-100).
-        List relevant categories (1-3 words each).
 
         RETURN JSON ONLY:
         {
           "classification": "productive" | "unproductive",
           "score": number, // 0-100
-          "categories": ["string"],
-          "explanation": "string"
         }
 
         CRITICAL RULES FOR "productive" (score 75-100):
@@ -569,7 +549,7 @@ app.post('/api/analyze-content-gemini', async (req, res) => {
         3. Informative: News from reputable sources (if context suggests informational intent), detailed explanations.
 
         If content matches any CRITICAL RULE, it IS "productive".
-        Entertainment-focused content (music videos, vlogs unless clearly educational, gaming, comedy skits) is "unproductive".
+        Entertainment-focused content (music videos, vlogs unless clearly educational, gaming, comedy skits, sports) is "unproductive".
         When educational value is genuinely ambiguous AFTER applying rules, lean slightly towards "productive" if it seems informational.
       `;
     } else {
@@ -583,26 +563,19 @@ app.post('/api/analyze-content-gemini', async (req, res) => {
         Content Snippet: ${content ? content.substring(0, 1000) : 'N/A'}
 
         Classify strictly as "productive" or "unproductive".
-        Provide a concise explanation.
         Assign a score (0-100).
-        List relevant categories (1-3 words each).
 
         RETURN JSON ONLY:
         {
           "classification": "productive" | "unproductive",
           "score": number, // 0-100
-          "categories": ["string"],
-          "explanation": "string"
         }
 
         GUIDELINES FOR "productive" (score generally 60-100):
-        1. Educational: Learning materials, articles on academic/technical subjects.
-        2. Professional: Work-related tools, industry news, documentation, skill development.
-        3. Informative: In-depth news analysis, research papers, well-structured information.
-        4. Task-Oriented: Sites for specific tasks like email, project management, coding platforms.
+        1. Educationa, Professional, Informative, Task-Oriented:.
         
         Purely entertainment, social media feeds (unless specific professional context), clickbait, or superficial content is "unproductive".
-        If "email" is in title or site, classify as productive.
+        
       `;
     }
     
