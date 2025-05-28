@@ -468,26 +468,47 @@ app.post('/api/classify-domain', async (req, res) => {
     }
 
     const prompt = `
-      Analyze the domain: "${domain}"
+      Analyze domain: "${domain}"
+      Classify STRICTLY as "always_productive", "always_unproductive", or "ambiguous".
+      "ambiguous" is RARE: for clear, balanced DUAL primary purposes ONLY (e.g., YouTube: education/entertainment).
+      Prioritize DOMINANT purpose. Justify briefly.
 
-      Classify it STRICTLY as one of the following:
-      - "always_productive"
-      - "always_unproductive"
-      - "ambiguous"
-
-      Provide a brief justification.
-
-      Return JSON ONLY:
+      RETURN JSON ONLY:
       {
-        "classification": "chosen_classification",
-        "justification": "brief_reason"
+        "classification": "chosen_classification_value", 
       }
 
-      Examples:
-      Domain: "github.com" -> {"classification": "always_productive", "justification": "Primarily for software development and version control."}
-      Domain: "youtube.com" -> {"classification": "ambiguous", "justification": "Hosts both highly educational and purely entertainment content."}
-      Domain: "tiktok.com" -> {"classification": "always_unproductive", "justification": "Primarily short-form entertainment."}
-      Domain: "wikipedia.org" -> {"classification": "always_productive", "justification": "Online encyclopedia, educational resource."}
+      RULES:
+
+      "always_productive":
+      - Education: university, online courses, research, Wikipedia, Khan Academy.
+      - Work/Career/Business: SaaS tools, GitHub, LinkedIn, finance tools, B2B, money-making ventures, professional news.
+      - Essential Info: government sites, technical documentation.
+      - Factual News (source focus): Reuters, Associated Press.
+
+      "always_unproductive":
+      - Entertainment: streaming (Netflix, not pure ed-platforms), games, celebrity gossip, comics.
+      - Sports: ESPN, talksport.com.
+      - Social Media (leisure focus): Facebook, Instagram, TikTok, Pinterest.
+      - Shopping (personal consumer goods): Amazon, eBay, fashion retail.
+      - Hobby Forums (non-work/education).
+      - Gambling/Betting.
+
+      "ambiguous": (Use sparingly)
+      - Mixed primary uses like YouTube (education/entertainment), Reddit (diverse subs).
+      - Major broad news sites (BBC, NYTimes) if significant entertainment/lifestyle sections balance hard news.
+
+      EXAMPLES:
+      Domain: "github.com" -> {"classification": "always_productive", "justification": "Software dev & collab."}
+      Domain: "coursera.org" -> {"classification": "always_productive", "justification": "Online courses."}
+      Domain: "forbes.com" -> {"classification": "always_productive", "justification": "Business & finance news."}
+      
+      Domain: "talksport.com" -> {"classification": "always_unproductive", "justification": "Sports news/entertainment."}
+      Domain: "tiktok.com" -> {"classification": "always_unproductive", "justification": "Short video entertainment."}
+      Domain: "amazon.com" -> {"classification": "always_unproductive", "justification": "E-commerce shopping."}
+      Domain: "cnn.com" -> {"classification": "ambiguous", "justification": "Broad news, opinion, lifestyle."}
+
+      Analyze: "${domain}"
     `;
     
     // Use the same gemini model for classification
