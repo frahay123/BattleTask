@@ -72,137 +72,218 @@ async function analyzeTabTitle(title, url = '') {
     };
   }
 
-  // Simplified prompt for all titles
-  const prompt = `
-    Title: "${title}"
-    Productive or unproductive?
-    JSON: {"classification": "productive" | "unproductive", "score": number}
-  `;
-
   try {
+    // Special prompt for YouTube titles
+    if (url.includes('youtube.com') || title.includes('YouTube')) {
+      const prompt = `
+        Analyze this YouTube video title: "${title}"
+
+        Classify strictly as "productive" or "unproductive".
+        Provide a concise explanation.
+        Assign a score (0-100).
+        List relevant categories (1-3 words each).
+
+        RETURN JSON ONLY:
+        {
+          "isProductive": boolean, // true if productive
+          "score": number, // 0-100
+          "categories": ["string"],
+          "explanation": "string"
+        }
+
+        CRITICAL RULES FOR "productive" (score 75-100):
+        1. Title indicates: Lectures, tutorials, documentaries, academic lessons (math, science, history, programming, languages, etc.), how-to guides.
+        
+        If title matches CRITICAL RULES, it IS "productive".
+        Titles suggesting primarily entertainment are "unproductive".
+      `;
+      
+      // Make request to Gemini API
+      const result = await model.generateContent(prompt);
+      const response = result.response;
+      return processGeminiTitleResponse(response);
+    }
+    
+    // Standard prompt for non-YouTube titles
+    const prompt = `
+      Analyze this tab title: "${title}"
+      ${url ? `Associated URL (for context): ${url}` : ''}
+
+      Classify strictly as "productive" or "unproductive".
+      Provide a concise explanation.
+      Assign a score (0-100).
+      List relevant categories (1-3 words each).
+
+      RETURN JSON ONLY:
+      {
+        "isProductive": boolean, // true if productive
+        "score": number, // 0-100
+        "categories": ["string"],
+        "explanation": "string"
+      }
+
+      GUIDELINES FOR "productive" (score generally 60-100):
+      1. Educational: Learning materials, articles on academic/technical subjects.
+      2. Professional: Work-related tools, industry news, documentation, skill development.
+      3. Informative: In-depth news analysis, research papers, well-structured information.
+      4. Task-Oriented: Titles indicating email, project management, coding platforms.
+      
+      Titles suggesting purely entertainment, social media feeds, clickbait, or superficial content are "unproductive".
+      If "email" is explicitly in the title, classify as productive.
+    `;
+
+    // Make request to Gemini API
     const result = await model.generateContent(prompt);
     const response = result.response;
     let responseText = response.text();
 
+    // Check if the response is valid JSON by removing markdown formatting if present
     if (responseText.includes('```json')) {
       responseText = responseText.split('```json')[1].split('```')[0].trim();
     } else if (responseText.includes('```')) {
       responseText = responseText.split('```')[1].split('```')[0].trim();
     }
 
+    // Parse the JSON response
     const analysis = JSON.parse(responseText);
 
-    const isProductive = analysis.classification === 'productive';
-    let score = 0;
-    if (typeof analysis.score === 'number') {
-      score = Math.min(100, Math.max(0, analysis.score));
-    } else if (typeof analysis.score === 'string') {
-      const parsedScore = parseFloat(analysis.score);
-      score = !isNaN(parsedScore) ? Math.min(100, Math.max(0, parsedScore)) : 0;
+    // Ensure required fields exist and have correct types
+    if (typeof analysis.isProductive !== 'boolean') {
+        analysis.isProductive = false; // Default if missing or wrong type
     }
-     if (score <= 1 && score >= 0 && score !== 0 && score !== 1) { // handle 0-1 float
-      score = Math.round(score * 100);
+    if (typeof analysis.score !== 'number') {
+        // Attempt to parse if it's a string, otherwise default
+        const parsedScore = parseFloat(analysis.score);
+        analysis.score = !isNaN(parsedScore) ? parsedScore : 0;
+    }
+    
+    // Normalize score to 0-100 range
+    // The prompt asks for 0-100, but this handles deviations
+    if (analysis.score <= 1 && analysis.score >= 0 && analysis.score !== 0 && analysis.score !== 1) { // check if it is float between 0 and 1 but not 0 or 1
+      analysis.score = Math.round(analysis.score * 100);
+    } else {
+      analysis.score = Math.min(100, Math.max(0, analysis.score));
+    }
+    
+    if (!Array.isArray(analysis.categories)) {
+        analysis.categories = [];
+    }
+    if (typeof analysis.explanation !== 'string') {
+        analysis.explanation = '';
     }
 
-
-    return {
-      isProductive: isProductive,
-      score: score,
-      categories: [], // Default empty array
-      explanation: '' // Default empty string
-    };
-
+    return analysis;
   } catch (error) {
-    console.error('Error analyzing title with simplified prompt:', error);
-    // Fallback for simpler prompt if JSON parsing fails or other error
-    const lowerTitle = title.toLowerCase();
-    const productiveKeywords = ['learn', 'tutorial', 'course', 'study', 'work', 'document', 'project', 'code', 'develop', 'research', 'news', 'article', 'email'];
-    let isProductive = productiveKeywords.some(kw => lowerTitle.includes(kw));
-    // Assign a very basic score based on keyword match
-    let score = isProductive ? 60 : 20;
-
-    if (url.includes('youtube.com')) {
-        const educationalYouTubeKeywords = ['lecture', 'educational', 'how to', 'documentary', 'science', 'math', 'history', 'programming tutorial'];
-        if (educationalYouTubeKeywords.some(kw => lowerTitle.includes(kw))) {
-            isProductive = true;
-            score = 85; // Higher score for clearly educational YouTube
-        } else {
-            // For YouTube, if not clearly educational by title, assume less productive by default with this simple model
-            // isProductive might already be true from generic keywords, but we can be more conservative
-            if (!isProductive) score = 10; // Lower score for generic YouTube titles
-        }
-    }
-
-
+    console.error('Error analyzing title:', error);
     return {
-      isProductive: isProductive,
-      score: score,
+      isProductive: false,
+      score: 0,
       categories: [],
-      explanation: 'Error during simplified analysis, using fallback'
+      explanation: 'Error during analysis'
     };
   }
 }
 
 /**
- * Process Gemini response for title analysis - ADAPTED FOR SIMPLIFIED PROMPT
- * This function might be less used if analyzeTabTitle handles parsing directly,
- * but kept for structure or if called from elsewhere with a similar simple response.
+ * Process Gemini response for title analysis
+ * @param {Object} response - Gemini API response
+ * @returns {Object} - Processed response
  */
 function processGeminiTitleResponse(response) {
   try {
     let responseText = response.text();
 
+    // Check if the response is valid JSON by removing markdown formatting if present
     if (responseText.includes('```json')) {
       responseText = responseText.split('```json')[1].split('```')[0].trim();
     } else if (responseText.includes('```')) {
       responseText = responseText.split('```')[1].split('```')[0].trim();
     }
 
-    const analysis = JSON.parse(responseText);
+    // Try to parse JSON
+    try {
+      const analysis = JSON.parse(responseText);
 
-    const isProductive = analysis.classification === 'productive';
-    let score = 0;
-    if (typeof analysis.score === 'number') {
-      score = Math.min(100, Math.max(0, analysis.score));
-    } else if (typeof analysis.score === 'string') {
-      const parsedScore = parseFloat(analysis.score);
-      score = !isNaN(parsedScore) ? Math.min(100, Math.max(0, parsedScore)) : 0;
+      // Ensure required fields exist and have correct types
+      if (typeof analysis.isProductive !== 'boolean') {
+        analysis.isProductive = false;
+      }
+      
+      if (typeof analysis.score !== 'number') {
+        const parsedScore = parseFloat(analysis.score);
+        analysis.score = !isNaN(parsedScore) ? parsedScore : 0;
+      }
+      
+      // Normalize score to 0-100 range (prompt requests 0-100, this is a safeguard)
+      if (analysis.score <= 1 && analysis.score >= 0 && analysis.score !== 0 && analysis.score !== 1) {
+        analysis.score = Math.round(analysis.score * 100);
+      } else {
+        analysis.score = Math.min(100, Math.max(0, analysis.score));
+      }
+      
+      if (!Array.isArray(analysis.categories)) {
+        analysis.categories = [];
+      }
+      if (typeof analysis.explanation !== 'string') {
+        analysis.explanation = '';
+      }
+
+      return analysis;
+    } catch (jsonError) {
+      console.error('Error parsing JSON from title analysis:', jsonError);
+      
+      // If can't parse JSON, fallback to text analysis
+      const text = responseText.toLowerCase();
+      
+      // Default classification
+      let isProductive = false;
+      let score = 30;
+      let categories = ['Unknown'];
+      let explanation = 'Could not parse response';
+      
+      // Check for educational indicators in the text
+      if (text.includes('productive') || 
+          text.includes('education') || 
+          text.includes('academic') || 
+          text.includes('learning')) {
+        isProductive = true;
+        score = 75;
+        categories = ['Education'];
+        explanation = 'Educational content detected';
+      }
+      
+      return {
+        isProductive,
+        score,
+        categories,
+        explanation
+      };
     }
-    if (score <= 1 && score >= 0 && score !== 0 && score !== 1) { // handle 0-1 float
-        score = Math.round(score * 100);
-    }
-
-
-    return {
-      isProductive: isProductive,
-      score: score,
-      categories: [], // Default empty
-      explanation: ''   // Default empty
-    };
-
-  } catch (jsonError) {
-    console.error('Error parsing JSON from simplified title analysis:', jsonError);
+  } catch (error) {
+    console.error('Error processing title response:', error);
     return {
       isProductive: false,
-      score: 10, // Low score on error
+      score: 0,
       categories: [],
-      explanation: 'Error parsing AI response for title'
+      explanation: 'Error processing analysis'
     };
   }
 }
 
 /**
- * Process Gemini response into a standardized format - ADAPTED FOR SIMPLIFIED PROMPT
+ * Process Gemini response into a standardized format
  * @param {Object} result - Gemini API response
  * @param {Object} res - Express response object
- * @returns {Object} - Processed response for Express
+ * @returns {Object} - Processed response
  */
-function processGeminiResponse(result, res) { // Note: 'res' Express object is passed here.
+function processGeminiResponse(result, res) {
   try {
     const responseText = result?.text()?.trim() || '';
+    
+    // Try to parse JSON from the response
     let jsonResult;
-
     try {
+      // Extract JSON if it's wrapped in markdown code blocks
       if (responseText.includes('```json')) {
         jsonResult = JSON.parse(responseText.split('```json')[1].split('```')[0]);
       } else if (responseText.includes('```')) {
@@ -210,60 +291,85 @@ function processGeminiResponse(result, res) { // Note: 'res' Express object is p
       } else {
         jsonResult = JSON.parse(responseText);
       }
-
-      const classification = jsonResult.classification;
-      const isProductive = classification === 'productive';
       
-      let score = 0;
-      if (typeof jsonResult.score === 'number') {
-        score = Math.min(100, Math.max(0, jsonResult.score));
-      } else if (typeof jsonResult.score === 'string') {
+      // Ensure proper format
+      if (typeof jsonResult.classification !== 'string' || !['productive', 'unproductive'].includes(jsonResult.classification)) {
+        // Fallback or error if classification is missing or invalid
+        console.warn('Invalid or missing classification in Gemini JSON response. Defaulting. Response:', responseText);
+        jsonResult.classification = 'unproductive'; // Default
+      }
+      jsonResult.isProductive = jsonResult.classification === 'productive';
+      
+      // Normalize score
+      if (typeof jsonResult.score !== 'number') {
         const parsedScore = parseFloat(jsonResult.score);
-        score = !isNaN(parsedScore) ? Math.min(100, Math.max(0, parsedScore)) : 0;
-      }
-      if (score <= 1 && score >= 0 && score !== 0 && score !== 1) { // handle 0-1 float
-        score = Math.round(score * 100);
+        jsonResult.score = !isNaN(parsedScore) ? parsedScore : 30; // Default score if parsing fails
       }
 
+      if (jsonResult.score <= 1 && jsonResult.score >= 0 && jsonResult.score !== 0 && jsonResult.score !== 1) {
+        jsonResult.score = Math.round(jsonResult.score * 100);
+      } else {
+        jsonResult.score = Math.min(100, Math.max(0, jsonResult.score));
+      }
 
-      return res.status(200).json({
-        classification: classification,
-        isProductive: isProductive,
-        score: score,
-        categories: [], // Default empty
-        explanation: ''   // Default empty
-      });
-
+      if (!Array.isArray(jsonResult.categories)) {
+        jsonResult.categories = ['Unknown'];
+      }
+      if (typeof jsonResult.explanation !== 'string') {
+        jsonResult.explanation = 'No explanation provided.';
+      }
+      
+      return res.status(200).json(jsonResult);
     } catch (parseError) {
-      console.error('Error parsing JSON from simplified Gemini response:', parseError, "Response text:", responseText);
-      // Fallback to basic text analysis if JSON parsing fails with the simplified prompt
+      console.error('Error parsing JSON from Gemini response:', parseError);
+      
+      // Fall back to basic text analysis if JSON parsing fails
       const analysisLower = responseText.toLowerCase();
       let classification = 'unproductive'; // Default
-      let score = 20; // Default score
+      let explanation = responseText;
+      let score = 30;
+      let categories = ['Unknown'];
       
       if (analysisLower.includes('productive')) {
         classification = 'productive';
-        score = 70;
+        score = 75;
+        categories = ['Work'];
+      } else if (analysisLower.includes('unproductive')) {
+        classification = 'unproductive';
+        score = 25;
+        categories = ['Leisure'];
+      } else {
+        // If neither keyword is found, analyze the text more carefully
+        if (
+          analysisLower.includes('work') || 
+          analysisLower.includes('education') || 
+          analysisLower.includes('learning') || 
+          analysisLower.includes('professional') ||
+          analysisLower.includes('valuable') ||
+          analysisLower.includes('useful') ||
+          analysisLower.includes('informative') ||
+          analysisLower.includes('tutorial') ||
+          analysisLower.includes('course') ||
+          analysisLower.includes('lecture')
+        ) {
+          classification = 'productive';
+          score = 75;
+          categories = ['Education'];
+        }
       }
-      // No explicit 'unproductive' check, default is unproductive.
-
+      
+      // Return a properly formatted response
       return res.status(200).json({
         classification: classification,
         isProductive: classification === 'productive',
-        score: score,
-        categories: [],
-        explanation: 'Simplified AI response parsing error, used fallback text analysis.'
+        score: score, 
+        categories: categories,
+        explanation: explanation.substring(0, 100) // Trim explanation to avoid excessive data
       });
     }
   } catch (error) {
-    console.error('Error processing simplified Gemini response:', error);
-    return res.status(500).json({ 
-        isProductive: false, 
-        score: 0, 
-        categories: [], 
-        explanation: 'Error processing content analysis',
-        error: 'Error processing content analysis' // Keep error field for client
-    });
+    console.error('Error processing Gemini response:', error);
+    return res.status(500).json({ error: 'Error processing content analysis' });
   }
 }
 
@@ -287,26 +393,28 @@ app.post('/api/tabs', async (req, res) => {
     if (!tab || !tab.title || !tab.id || !tab.url) {
       return res.status(400).json({ success: false, error: 'Tab data is required' });
     }
+    // Validate URL
     if (!validator.isURL(tab.url, { require_protocol: true })) {
       return res.status(400).json({ success: false, error: 'Invalid URL' });
     }
+    // Sanitize title
     const cleanTitle = validator.escape(tab.title);
 
-    // Analyze the tab title using the simplified version
-    const analysis = await analyzeTabTitle(cleanTitle, tab.url); // Pass URL for context in fallback
+    // Analyze the tab title for productive content
+    const analysis = await analyzeTabTitle(cleanTitle);
     
     res.json({ 
       success: true, 
       id: tab.id, 
-      analysis: { // Ensure this structure is maintained for the client
+      analysis: {
         isProductive: analysis.isProductive,
         score: analysis.score,
-        categories: analysis.categories, // Will be []
-        explanation: analysis.explanation // Will be '' or error message
+        categories: analysis.categories,
+        explanation: analysis.explanation
       }
     });
   } catch (error) {
-    console.error('Error processing tab data (simplified):', error);
+    console.error('Error processing tab data:', error);
     res.status(500).json({ success: false, error: 'Internal server error. Please try again later.' });
   }
 });
@@ -314,56 +422,82 @@ app.post('/api/tabs', async (req, res) => {
 // Analyze a title directly from the frontend
 app.post('/api/analyze-title', async (req, res) => {
   try {
-    const { title, url } = req.body; // Domain not used in this simplified version
+    const { title, url, domain } = req.body;
     
     if (!title) {
       return res.status(400).json({ success: false, error: 'Title is required' });
     }
     
+    // Sanitize title
     const cleanTitle = validator.escape(title);
-    const analysis = await analyzeTabTitle(cleanTitle, url || ''); // Pass URL for context in fallback
     
-    // No specific YouTube enhancement here as analyzeTabTitle's fallback has some basic YouTube logic
+    // Pass url to analyzeTabTitle for better YouTube detection
+    const analysis = await analyzeTabTitle(cleanTitle, url || '');
+    
+    // Enhance confidence for YouTube educational content
+    if (url && url.includes('youtube.com') && analysis.isProductive) {
+      // Educational YouTube content should have high confidence
+      if (analysis.score < 75) {
+        analysis.score = 75;
+      }
+      // Add YouTube category if not present
+      if (!analysis.categories.includes('YouTube') && !analysis.categories.includes('Education')) {
+        analysis.categories.push('Education');
+      }
+    }
     
     res.json({
       success: true,
-      isProductive: analysis.isProductive,
-      score: analysis.score,
-      categories: analysis.categories, // Will be []
-      explanation: analysis.explanation, // Will be '' or error message
-      // classification field is not part of this specific endpoint's defined response,
-      // but isProductive covers the core need.
+      ...analysis
     });
   } catch (error) {
-    console.error('Error analyzing title (simplified):', error);
+    console.error('Error analyzing title:', error);
     res.status(500).json({ success: false, error: 'Internal server error. Please try again later.' });
   }
 });
 
+// Add new API endpoints for Gemini integration for domain and content classification
 
-// Endpoint for classifying domains with Gemini (SIMPLIFIED)
+// Endpoint for classifying domains with Gemini
 app.post('/api/classify-domain', async (req, res) => {
   try {
-    const { domain } = req.body;
+    const { domain } = req.body; // Expect only domain from client
     
     if (!domain) {
       return res.status(400).json({ error: 'Domain is required' });
     }
 
     const prompt = `
-      Domain: "${domain}"
-      This is for chrome extension to classify the domain as productive or unproductive. Be strict and only choose ambigious if absolutely necessary.
-      Classification: "productive", "unproductive", or "ambiguous"?
-      JSON: {"classification": "productive" | "unproductive" | "ambiguous"}
+      Analyze the domain: "${domain}"
+
+      Classify it STRICTLY as one of the following:
+      - "always_productive"
+      - "always_unproductive"
+      - "ambiguous"
+
+      Provide a brief justification.
+
+      Return JSON ONLY:
+      {
+        "classification": "chosen_classification",
+        "justification": "brief_reason"
+      }
+
+      Examples:
+      Domain: "github.com" -> {"classification": "always_productive", "justification": "Primarily for software development and version control."}
+      Domain: "youtube.com" -> {"classification": "ambiguous", "justification": "Hosts both highly educational and purely entertainment content."}
+      Domain: "tiktok.com" -> {"classification": "always_unproductive", "justification": "Primarily short-form entertainment."}
+      Domain: "wikipedia.org" -> {"classification": "always_productive", "justification": "Online encyclopedia, educational resource."}
     `;
     
-    const response = await model.generateContent({
+    // Use the same gemini model for classification
+    const response = await model.generateContent({ // Pass as object for new API
       contents: [{ role: 'user', parts: [{ text: prompt }]}]
     });
     
     const result = response.response;
     let responseText = result?.text()?.trim() || '';
-    let classificationResult = { classification: 'ambiguous' }; // Default
+    let classificationResult;
 
     try {
       if (responseText.includes('```json')) {
@@ -371,69 +505,118 @@ app.post('/api/classify-domain', async (req, res) => {
       } else if (responseText.includes('```')) {
         responseText = responseText.split('```')[1].split('```')[0].trim();
       }
-      const parsedJson = JSON.parse(responseText);
+      classificationResult = JSON.parse(responseText);
 
-      if (['productive', 'unproductive', 'ambiguous'].includes(parsedJson.classification)) {
-        classificationResult.classification = parsedJson.classification;
-      } else {
-        console.warn(`Unexpected Gemini classification for domain: "${parsedJson.classification}". Defaulting to ambiguous for ${domain}.`);
+      // Ensure classification is one of our expected values
+      if (!['always_productive', 'always_unproductive', 'ambiguous'].includes(classificationResult.classification)) {
+        console.warn(`Unexpected Gemini response for domain classification: "${classificationResult.classification}". Defaulting to ambiguous for domain: ${domain}`);
+        classificationResult.classification = 'ambiguous';
+        classificationResult.justification = classificationResult.justification || 'Unexpected response from AI.';
       }
     } catch (e) {
       console.error(`Error parsing JSON for domain classification (${domain}):`, e, "Response text:", responseText);
-      // classificationResult remains 'ambiguous' as set by default
-      // Basic text fallback for domain if JSON fails completely
-      const lowerDomain = domain.toLowerCase();
-      if (lowerDomain.includes('github') || lowerDomain.includes('stackoverflow') || lowerDomain.includes('medium') || lowerDomain.includes('wikipedia') || lowerDomain.includes('edu') || lowerDomain.includes('gov')) {
-        classificationResult.classification = 'productive';
-      } else if (lowerDomain.includes('tiktok') || lowerDomain.includes('facebook') || lowerDomain.includes('instagram') || lowerDomain.includes('twitter') || lowerDomain.includes('game')) {
-        classificationResult.classification = 'unproductive';
-      }
+      classificationResult = {
+        classification: 'ambiguous', // Default on error
+        justification: 'Error parsing AI response.'
+      };
     }
-        
-    console.log(`Gemini classified domain (simplified): ${domain} as ${classificationResult.classification}`);
+    
+    // Log the classification for analytics
+    console.log(`Gemini classified domain: ${domain} as ${classificationResult.classification}`);
     
     return res.status(200).json({ 
       classification: classificationResult.classification,
-      // justification: '', // No longer requested from AI
+      justification: classificationResult.justification,
       domain: domain
     });
   } catch (error) {
-    console.error('Error classifying domain with Gemini (simplified):', error);
-    return res.status(500).json({ error: 'Error processing domain classification request', classification: 'ambiguous' });
+    console.error('Error classifying domain with Gemini:', error);
+    return res.status(500).json({ error: 'Error processing domain classification request' });
   }
 });
 
-// Endpoint for analyzing content with Gemini (SIMPLIFIED)
+// Endpoint for analyzing content with Gemini
 app.post('/api/analyze-content-gemini', async (req, res) => {
   try {
-    const { url, title, content, siteName } = req.body; // siteName might offer little value now
+    const { url, title, content, siteName } = req.body;
+    let prompt;
     
-    const prompt = `
-      Content Analysis:
-      Title: ${title || 'N/A'}
-      URL: ${url || 'N/A'}
-      Snippet: ${content ? content.substring(0, 500) : 'N/A'} 
-      Productive or unproductive? Be strict and carefully think about the content to decide if for a chrome extension that tracks productivity what the content should be classified as. 
-      JSON: {"classification": "productive" | "unproductive", "score": number}
-    `;
+    // Specialized prompt for YouTube content
+    if (siteName === 'YouTube' || (url && url.includes('youtube.com'))) {
+      prompt = `
+        Analyze the YouTube content below.
+
+        URL: ${url || 'N/A'}
+        Title: ${title || 'N/A'}
+        Content Snippet: ${content ? content.substring(0, 1000) : 'N/A'}
+
+        Classify strictly as "productive" or "unproductive".
+        Provide a concise explanation.
+        Assign a score (0-100).
+        List relevant categories (1-3 words each).
+
+        RETURN JSON ONLY:
+        {
+          "classification": "productive" | "unproductive",
+          "score": number, // 0-100
+          "categories": ["string"],
+          "explanation": "string"
+        }
+
+        CRITICAL RULES FOR "productive" (score 75-100):
+        1. Educational: Lectures, tutorials, documentaries, academic lessons (math, science, history, programming, languages, etc.).
+        2. Skill Development: How-to guides, professional skills.
+        3. Informative: News from reputable sources (if context suggests informational intent), detailed explanations.
+
+        If content matches any CRITICAL RULE, it IS "productive".
+        Entertainment-focused content (music videos, vlogs unless clearly educational, gaming, comedy skits) is "unproductive".
+        When educational value is genuinely ambiguous AFTER applying rules, lean slightly towards "productive" if it seems informational.
+      `;
+    } else {
+      // Standard prompt for other content
+      prompt = `
+        Analyze the web content below.
+
+        URL: ${url || 'N/A'}
+        Title: ${title || 'N/A'}
+        ${siteName ? 'Site: ' + siteName : ''}
+        Content Snippet: ${content ? content.substring(0, 1000) : 'N/A'}
+
+        Classify strictly as "productive" or "unproductive".
+        Provide a concise explanation.
+        Assign a score (0-100).
+        List relevant categories (1-3 words each).
+
+        RETURN JSON ONLY:
+        {
+          "classification": "productive" | "unproductive",
+          "score": number, // 0-100
+          "categories": ["string"],
+          "explanation": "string"
+        }
+
+        GUIDELINES FOR "productive" (score generally 60-100):
+        1. Educational: Learning materials, articles on academic/technical subjects.
+        2. Professional: Work-related tools, industry news, documentation, skill development.
+        3. Informative: In-depth news analysis, research papers, well-structured information.
+        4. Task-Oriented: Sites for specific tasks like email, project management, coding platforms.
         
+        Purely entertainment, social media feeds (unless specific professional context), clickbait, or superficial content is "unproductive".
+        If "email" is in title or site, classify as productive.
+      `;
+    }
+    
+    // Use the gemini model for content analysis
     const response = await model.generateContent({
       contents: [{ role: 'user', parts: [{ text: prompt }]}]
     });
     
     const result = response.response;
-    return processGeminiResponse(result, res); // Use the adapted processGeminiResponse
+    return processGeminiResponse(result, res); // Simplified: always use processGeminiResponse
 
   } catch (error) {
-    console.error('Error analyzing content with Gemini (simplified):', error);
-    // Ensure the response structure from processGeminiResponse (error case) is used
-     return res.status(500).json({ 
-        isProductive: false, 
-        score: 0, 
-        categories: [], 
-        explanation: 'Error processing simplified content analysis request',
-        error: 'Error processing simplified content analysis request' 
-    });
+    console.error('Error analyzing content with Gemini:', error);
+    return res.status(500).json({ error: 'Error processing content analysis request' });
   }
 });
 
