@@ -37,27 +37,45 @@ const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
 app.use(cors());
 app.use(bodyParser.json());
 
-// Rate limiting: 300 requests per IP per day
+// General IP-based rate limiting:
+// This acts as a broad, initial shield.
 const ipLimiter = rateLimit({
   windowMs: 24 * 60 * 60 * 1000, // 24 hours
-  max: 300,
-  message: { success: false, error: 'Too many requests from this IP, try again tomorrow.' }
+  max: 300, // Max 300 requests per IP per day (can be adjusted)
+  message: { success: false, error: 'Too many requests from this IP, try again tomorrow.' },
+  standardHeaders: true, // Return rate limit info in the `RateLimit-*` headers
+  legacyHeaders: false, // Disable the `X-RateLimit-*` headers
 });
 app.use('/api/', ipLimiter);
 
-// Per-user rate limiting (based on user ID, if provided)
-const userLimiter = rateLimit({
-  windowMs: 24 * 60 * 60 * 1000,
-  max: 300,
+// Per-user/device rate limiting (more specific)
+// This will be the primary limiter for identified requests.
+const userDeviceLimiter = rateLimit({
+  windowMs: 24 * 60 * 60 * 1000, // 24 hours
+  max: 5, // Hard limit of 300 requests per day per identified key
   keyGenerator: (req) => {
-    // Use tab.id, or a userId field, or fallback to IP
-    if (req.body && req.body.tab && req.body.tab.id) return 'user-' + req.body.tab.id;
-    if (req.body && req.body.userId) return 'user-' + req.body.userId;
-    return req.ip;
+    // 1. Prioritize Authenticated User ID (if you implement sending it in the future)
+    //    Example: if (req.body && req.body.userId) return `user-${req.body.userId}`;
+    //    Example: if (req.headers['x-user-id']) return `user-${req.headers['x-user-id']}`;
+
+    // 2. Use Client-Generated Device ID from header
+    const deviceId = req.headers['x-device-id'];
+    if (deviceId && validator.isUUID(deviceId)) {
+      // Ensure it's a valid UUID to prevent misuse of this header
+      return `device-${deviceId}`;
+    }
+
+    // 3. Fallback to IP address if no valid User ID or Device ID is found
+    // The ipLimiter above already provides general IP protection.
+    // This keyGenerator ensures that if a device ID IS present, it's preferred over just IP for THIS limiter.
+    // If deviceId is missing/invalid, this limiter will also use IP, effectively layering with ipLimiter for those cases.
+    return `ip-${req.ip}`; 
   },
-  message: { success: false, error: 'Too many requests for this user, try again tomorrow.' }
+  message: { success: false, error: 'API rate limit exceeded for this user/device. Please try again tomorrow.' },
+  standardHeaders: true,
+  legacyHeaders: false,
 });
-app.use('/api/', userLimiter);
+app.use('/api/', userDeviceLimiter); // Apply this limiter to all /api/ routes
 
 /**
  * Analyze a tab title to determine if it's productive content
@@ -476,6 +494,7 @@ app.post('/api/classify-domain', async (req, res) => {
       RETURN JSON ONLY:
       {
         "classification": "chosen_classification_value", 
+        "justification": "short_reason"
       }
 
       RULES:
