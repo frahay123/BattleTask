@@ -52,7 +52,7 @@ app.use('/api/', ipLimiter);
 // This will be the primary limiter for identified requests.
 const userDeviceLimiter = rateLimit({
   windowMs: 24 * 60 * 60 * 1000, // 24 hours
-  max: 300, // Hard limit of 300 requests per day per identified key
+  max: 5, // Hard limit of 300 requests per day per identified key
   keyGenerator: (req) => {
     // 1. Prioritize Authenticated User ID (if you implement sending it in the future)
     //    Example: if (req.body && req.body.userId) return `user-${req.body.userId}`;
@@ -578,7 +578,7 @@ app.post('/api/classify-domain', async (req, res) => {
 // Endpoint for analyzing content with Gemini
 app.post('/api/analyze-content-gemini', async (req, res) => {
   try {
-    const { url, title, content, siteName } = req.body;
+    const { url, title, content, siteName, channelName } = req.body;
     let prompt;
     
     // Specialized prompt for YouTube content
@@ -588,6 +588,7 @@ app.post('/api/analyze-content-gemini', async (req, res) => {
 
         URL: ${url || 'N/A'}
         Title: ${title || 'N/A'}
+        ${channelName ? `Channel: ${channelName}` : ''}
         Content Snippet: ${content ? content.substring(0, 1000) : 'N/A'}
 
         Classify strictly as "productive" or "unproductive".
