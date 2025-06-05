@@ -105,8 +105,6 @@ async function analyzeTabTitle(title, url = '') {
         {
           "isProductive": boolean, // true if productive
           "score": number, // 0-100
-          "categories": ["string"],
-          "explanation": "string"
         }
 
         CRITICAL RULES FOR "productive" (score 75-100):
@@ -136,8 +134,6 @@ async function analyzeTabTitle(title, url = '') {
       {
         "isProductive": boolean, // true if productive
         "score": number, // 0-100
-        "categories": ["string"],
-        "explanation": "string"
       }
 
       GUIDELINES FOR "productive" (score generally 60-100):
@@ -494,7 +490,6 @@ app.post('/api/classify-domain', async (req, res) => {
       RETURN JSON ONLY:
       {
         "classification": "chosen_classification_value", 
-        "justification": "short_reason"
       }
 
       RULES:
@@ -589,7 +584,7 @@ app.post('/api/analyze-content-gemini', async (req, res) => {
         URL: ${url || 'N/A'}
         Title: ${title || 'N/A'}
         ${channelName ? `Channel: ${channelName}` : ''}
-        Content Snippet: ${content ? content.substring(0, 1000) : 'N/A'}
+       
 
         Classify strictly as "productive" or "unproductive".
         Provide a concise explanation.
@@ -600,8 +595,6 @@ app.post('/api/analyze-content-gemini', async (req, res) => {
         {
           "classification": "productive" | "unproductive",
           "score": number, // 0-100
-          "categories": ["string"],
-          "explanation": "string"
         }
 
         CRITICAL RULES FOR "productive" (score 75-100):
@@ -621,7 +614,7 @@ app.post('/api/analyze-content-gemini', async (req, res) => {
         URL: ${url || 'N/A'}
         Title: ${title || 'N/A'}
         ${siteName ? 'Site: ' + siteName : ''}
-        Content Snippet: ${content ? content.substring(0, 1000) : 'N/A'}
+       
 
         Classify strictly as "productive" or "unproductive".
         Provide a concise explanation.
@@ -632,8 +625,6 @@ app.post('/api/analyze-content-gemini', async (req, res) => {
         {
           "classification": "productive" | "unproductive",
           "score": number, // 0-100
-          "categories": ["string"],
-          "explanation": "string"
         }
 
         GUIDELINES FOR "productive" (score generally 60-100):
