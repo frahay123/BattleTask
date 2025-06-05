@@ -52,7 +52,7 @@ app.use('/api/', ipLimiter);
 // This will be the primary limiter for identified requests.
 const userDeviceLimiter = rateLimit({
   windowMs: 24 * 60 * 60 * 1000, // 24 hours
-  max: 5, // Hard limit of 300 requests per day per identified key
+  max: 300, // Hard limit of 300 requests per day per identified key
   keyGenerator: (req) => {
     // 1. Prioritize Authenticated User ID (if you implement sending it in the future)
     //    Example: if (req.body && req.body.userId) return `user-${req.body.userId}`;
