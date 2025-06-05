@@ -52,7 +52,7 @@ app.use('/api/', ipLimiter);
 // This will be the primary limiter for identified requests.
 const userDeviceLimiter = rateLimit({
   windowMs: 24 * 60 * 60 * 1000, // 24 hours
-  max: 300, // Hard limit of 300 requests per day per identified key
+  max: 5, // Hard limit of 300 requests per day per identified key
   keyGenerator: (req) => {
     // 1. Prioritize Authenticated User ID (if you implement sending it in the future)
     //    Example: if (req.body && req.body.userId) return `user-${req.body.userId}`;
@@ -105,6 +105,8 @@ async function analyzeTabTitle(title, url = '') {
         {
           "isProductive": boolean, // true if productive
           "score": number, // 0-100
+          "categories": ["string"],
+          "explanation": "string"
         }
 
         CRITICAL RULES FOR "productive" (score 75-100):
@@ -134,6 +136,8 @@ async function analyzeTabTitle(title, url = '') {
       {
         "isProductive": boolean, // true if productive
         "score": number, // 0-100
+        "categories": ["string"],
+        "explanation": "string"
       }
 
       GUIDELINES FOR "productive" (score generally 60-100):
@@ -490,6 +494,7 @@ app.post('/api/classify-domain', async (req, res) => {
       RETURN JSON ONLY:
       {
         "classification": "chosen_classification_value", 
+        "justification": "short_reason"
       }
 
       RULES:
@@ -584,7 +589,7 @@ app.post('/api/analyze-content-gemini', async (req, res) => {
         URL: ${url || 'N/A'}
         Title: ${title || 'N/A'}
         ${channelName ? `Channel: ${channelName}` : ''}
-       
+        Content Snippet: ${content ? content.substring(0, 10) : 'N/A'}
 
         Classify strictly as "productive" or "unproductive".
         Provide a concise explanation.
@@ -595,6 +600,8 @@ app.post('/api/analyze-content-gemini', async (req, res) => {
         {
           "classification": "productive" | "unproductive",
           "score": number, // 0-100
+          "categories": ["string"],
+          "explanation": "string"
         }
 
         CRITICAL RULES FOR "productive" (score 75-100):
@@ -614,7 +621,7 @@ app.post('/api/analyze-content-gemini', async (req, res) => {
         URL: ${url || 'N/A'}
         Title: ${title || 'N/A'}
         ${siteName ? 'Site: ' + siteName : ''}
-       
+        Content Snippet: ${content ? content.substring(0, 10) : 'N/A'}
 
         Classify strictly as "productive" or "unproductive".
         Provide a concise explanation.
@@ -625,6 +632,8 @@ app.post('/api/analyze-content-gemini', async (req, res) => {
         {
           "classification": "productive" | "unproductive",
           "score": number, // 0-100
+          "categories": ["string"],
+          "explanation": "string"
         }
 
         GUIDELINES FOR "productive" (score generally 60-100):
