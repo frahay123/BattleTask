@@ -35,7 +35,7 @@ app.use('/api/', rateLimiter);
 
 // PROMPT 1: Domain Classification - BULLETPROOF VERSION
 const DOMAIN_CLASSIFICATION_PROMPT = `
-ANALYZE DOMAIN: "${DOMAIN}"
+ANALYZE DOMAIN: "DOMAIN_PLACEHOLDER"
 
 CLASSIFICATION CRITERIA:
 
@@ -77,8 +77,8 @@ NO explanations, NO other text, ONLY valid JSON.`;
 // PROMPT 2: YouTube Analysis - ENHANCED VERSION  
 const YOUTUBE_ANALYSIS_PROMPT = `
 ANALYZE YOUTUBE VIDEO:
-Title: "${TITLE}"
-Channel: "${CHANNEL}"
+Title: "TITLE_PLACEHOLDER"
+Channel: "CHANNEL_PLACEHOLDER"
 
 PRODUCTIVITY SCORING:
 
@@ -174,7 +174,7 @@ app.post('/api/classify-domain', async (req, res) => {
       return res.status(400).json({ error: 'Invalid domain format' });
     }
     
-    const prompt = DOMAIN_CLASSIFICATION_PROMPT.replace('${DOMAIN}', cleanDomain);
+    const prompt = DOMAIN_CLASSIFICATION_PROMPT.replace('DOMAIN_PLACEHOLDER', cleanDomain);
     const response = await model.generateContent({ 
       contents: [{ role: 'user', parts: [{ text: prompt }]}],
       generationConfig: {
@@ -206,8 +206,8 @@ app.post('/api/analyze-youtube', async (req, res) => {
     const cleanChannel = (channelName || 'Unknown').trim().substring(0, 100);
     
     const prompt = YOUTUBE_ANALYSIS_PROMPT
-      .replace('${TITLE}', cleanTitle)
-      .replace('${CHANNEL}', cleanChannel);
+      .replace('TITLE_PLACEHOLDER', cleanTitle)
+      .replace('CHANNEL_PLACEHOLDER', cleanChannel);
     
     const response = await model.generateContent({ 
       contents: [{ role: 'user', parts: [{ text: prompt }]}],
