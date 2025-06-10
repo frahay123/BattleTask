@@ -105,17 +105,27 @@ RETURN JSON ONLY:
   "explanation": "brief explanation"
 }
 
-RULES FOR "productive" (score 70-100):
-- Educational: Tutorials, lectures, documentaries, how-to guides
-- Academic: Math, science, programming, languages, history
-- Professional: Skill development, career advice, technical content
-- Informative: News analysis, research explanations
+STRICT RULES - BE VERY CONSERVATIVE:
 
-RULES FOR "unproductive" (score 0-40):
-- Entertainment: Music videos, vlogs, gaming, comedy, reactions
-- Leisure: Lifestyle content, casual discussions, entertainment
+"productive" (score 70-100) ONLY if DIRECTLY educational/professional:
+- Programming tutorials (code, development)
+- Academic lectures (university-level content)
+- Professional skill training (job-specific skills)
+- Technical documentation walkthroughs
+- Language learning lessons
+- Math/science educational content
+- Official educational channels (Khan Academy, Coursera, MIT, etc.)
 
-When unclear, favor "productive" if educational intent is possible.
+"unproductive" (score 0-40) for EVERYTHING ELSE including:
+- Entertainment: Gaming, music, vlogs, comedy, reactions
+- Sports: Any sports content, athlete profiles, game highlights  
+- Lifestyle: Travel, food, fashion, personal stories
+- News: General news, politics, current events
+- Reviews: Product reviews, movie reviews, general opinions
+- Discussion: Casual talk, podcasts, interviews (unless strictly professional)
+- General interest: Documentaries about people, places, events
+
+CRITICAL: When in doubt, classify as "unproductive". Only classify as "productive" if it's CLEARLY educational content that directly teaches skills or academic knowledge.
 `;
 
 /**
