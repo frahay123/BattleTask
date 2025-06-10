@@ -42,9 +42,34 @@ RETURN JSON ONLY:
   "classification": "always_productive" | "always_unproductive"
 }
 
-RULES:
-"always_productive": .edu, GitHub, Gmail, Slack, documentation, work tools
-"always_unproductive": Netflix, social media, gaming, entertainment, shopping
+CLASSIFICATION CRITERIA:
+ALWAYS_PRODUCTIVE domains (work/education/development):Add commentMore actions
+- Educational:
+- Development:
+- Documentation: 
+- Work Communication:
+- Email/Calendar:
+- Cloud Storage: 
+- Design Tools: 
+- Analytics/Admin
+- Learning Platforms: 
+- References: 
+
+ALWAYS_UNPRODUCTIVE domains (entertainment/social/shopping):
+- Social Media: 
+- Video Entertainment: 
+- Gaming: 
+- Shopping: 
+- News/Media: 
+- Sports: 
+- Dating: 
+- Memes/Fun: 
+
+DECISION LOGIC:
+1. Check exact domain matches above
+2. Check top-level domain (.edu = productive, .xxx/.adult = unproductive)
+3. Check subdomain patterns (docs.* = productive, shop.* = unproductive)
+4. If ambiguous, default to "always_unproductive"
 `;
 
 // PROMPT 2: YouTube Analysis  
@@ -59,9 +84,35 @@ RETURN JSON ONLY:
 }
 
 STRICT RULES:
-"productive" (70-100): Programming tutorials, academic lectures, technical training
-"unproductive" (0-40): Everything else - sports, entertainment, lifestyle, news
-When in doubt: unproductive
+PRODUCTIVITY SCORING:Add commentMore actions
+
+PRODUCTIVE (70-100 points):
+- Programming: tutorials, coding, software development
+- Academic: lectures, educational content, research
+- Professional Skills: business, marketing, design tutorials
+- Technical Training: certifications, courses, how-to guides
+- Language Learning: foreign language instruction
+- Science/Math: educational explanations, experiments
+
+UNPRODUCTIVE (0-40 points):
+- Entertainment: movies, TV shows, comedy, pranks
+- Gaming: gameplay, reviews, streaming
+- Sports: highlights, analysis, commentary  
+- Music: songs, concerts, music videos
+- Lifestyle: vlogs, fashion, travel, food
+- News/Politics: current events, commentary
+- Gossip/Drama: celebrity content, reactions
+
+SCORING GUIDELINES:
+- Educational programming tutorial: 85-95 points
+- University lecture: 80-90 points  
+- Business/marketing course: 75-85 points
+- Sports highlights: 10-20 points
+- Music video: 5-15 points
+- Gaming content: 5-20 points
+- Entertainment/comedy: 0-15 points
+
+WHEN IN DOUBT: Always classify as "unproductive" with 0-30 points.
 `;
 
 function parseResponse(text) {
