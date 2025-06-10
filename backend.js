@@ -35,7 +35,7 @@ app.use('/api/', rateLimiter);
 
 // PROMPT 1: Domain Classification
 const DOMAIN_CLASSIFICATION_PROMPT = `
-Analyze this domain: "${DOMAIN}"
+Analyze this domain: "{DOMAIN}"
 
 RETURN JSON ONLY:
 {
@@ -49,8 +49,8 @@ RULES:
 
 // PROMPT 2: YouTube Analysis  
 const YOUTUBE_ANALYSIS_PROMPT = `
-Title: "${TITLE}"
-Channel: "${CHANNEL}"
+Title: "{TITLE}"
+Channel: "{CHANNEL}"
 
 RETURN JSON ONLY:
 {
