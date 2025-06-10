@@ -35,41 +35,15 @@ app.use('/api/', rateLimiter);
 
 // PROMPT 1: Domain Classification
 const DOMAIN_CLASSIFICATION_PROMPT = `
-Analyze this domain: "{DOMAIN}"
+Domain: "{DOMAIN}"
 
-RETURN JSON ONLY:
+JSON only:
 {
   "classification": "always_productive" | "always_unproductive"
 }
 
-CLASSIFICATION CRITERIA:
-ALWAYS_PRODUCTIVE domains (work/education/development):Add commentMore actions
-- Educational:
-- Development:
-- Documentation: 
-- Work Communication:
-- Email/Calendar:
-- Cloud Storage: 
-- Design Tools: 
-- Analytics/Admin
-- Learning Platforms: 
-- References: 
-
-ALWAYS_UNPRODUCTIVE domains (entertainment/social/shopping):
-- Social Media: 
-- Video Entertainment: 
-- Gaming: 
-- Shopping: 
-- News/Media: 
-- Sports: 
-- Dating: 
-- Memes/Fun: 
-
-DECISION LOGIC:
-1. Check exact domain matches above
-2. Check top-level domain (.edu = productive, .xxx/.adult = unproductive)
-3. Check subdomain patterns (docs.* = productive, shop.* = unproductive)
-4. If ambiguous, default to "always_unproductive"
+always_productive: Educational institutions, government sites, code repositories, developer tools, documentation, email services, work communication tools, video conferencing, productivity apps, design tools, cloud storage, learning platforms
+always_unproductive: Streaming services, social media, gaming platforms, entertainment sites, music/video platforms, shopping sites, news/media, sports sites, lifestyle blogs, forums for non-work topics
 `;
 
 // PROMPT 2: YouTube Analysis  
@@ -77,42 +51,15 @@ const YOUTUBE_ANALYSIS_PROMPT = `
 Title: "{TITLE}"
 Channel: "{CHANNEL}"
 
-RETURN JSON ONLY:
+JSON only:
 {
   "classification": "productive" | "unproductive",
   "score": number
 }
 
-STRICT RULES:
-PRODUCTIVITY SCORING:Add commentMore actions
-
-PRODUCTIVE (70-100 points):
-- Programming: tutorials, coding, software development
-- Academic: lectures, educational content, research
-- Professional Skills: business, marketing, design tutorials
-- Technical Training: certifications, courses, how-to guides
-- Language Learning: foreign language instruction
-- Science/Math: educational explanations, experiments
-
-UNPRODUCTIVE (0-40 points):
-- Entertainment: movies, TV shows, comedy, pranks
-- Gaming: gameplay, reviews, streaming
-- Sports: highlights, analysis, commentary  
-- Music: songs, concerts, music videos
-- Lifestyle: vlogs, fashion, travel, food
-- News/Politics: current events, commentary
-- Gossip/Drama: celebrity content, reactions
-
-SCORING GUIDELINES:
-- Educational programming tutorial: 85-95 points
-- University lecture: 80-90 points  
-- Business/marketing course: 75-85 points
-- Sports highlights: 10-20 points
-- Music video: 5-15 points
-- Gaming content: 5-20 points
-- Entertainment/comedy: 0-15 points
-
-WHEN IN DOUBT: Always classify as "unproductive" with 0-30 points.
+productive (60-100): Programming/coding tutorials, academic lectures, technical documentation, professional skills, science/math education, language learning, career development
+unproductive (0-40): Entertainment, sports, gaming, vlogs, news, music, lifestyle, comedy, reaction videos, food/travel
+Default: unproductive
 `;
 
 function parseResponse(text) {
@@ -133,7 +80,7 @@ app.post('/api/classify-domain', async (req, res) => {
     const { domain } = req.body;
     if (!domain) return res.status(400).json({ error: 'Domain required' });
     
-    const prompt = DOMAIN_CLASSIFICATION_PROMPT.replace('${DOMAIN}', domain);
+    const prompt = DOMAIN_CLASSIFICATION_PROMPT.replace('{DOMAIN}', domain);
     const response = await model.generateContent({ contents: [{ role: 'user', parts: [{ text: prompt }]}]});
     const result = parseResponse(response.response.text());
     
@@ -150,8 +97,8 @@ app.post('/api/analyze-youtube', async (req, res) => {
     if (!title) return res.status(400).json({ error: 'Title required' });
     
     const prompt = YOUTUBE_ANALYSIS_PROMPT
-      .replace('${TITLE}', title || 'Unknown')
-      .replace('${CHANNEL}', channelName || 'Unknown');
+      .replace('{TITLE}', title || 'Unknown')
+      .replace('{CHANNEL}', channelName || 'Unknown');
     
     const response = await model.generateContent({ contents: [{ role: 'user', parts: [{ text: prompt }]}]});
     const result = parseResponse(response.response.text());
