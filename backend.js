@@ -33,10 +33,6 @@ const PORT = process.env.PORT || 3000;
 const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
 const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
 
-// For environments like Cloud Run that use a proxy, this setting is required
-// for express-rate-limit to correctly identify the client IP address.
-app.set('trust proxy', true);
-
 // Middleware
 app.use(cors());
 app.use(bodyParser.json());
@@ -96,7 +92,7 @@ async function analyzeYouTubeTitle(title) {
 
   try {
     const prompt = `
-        Analyze this YouTube video title: "${title}"
+        Analyze this YouTube video title: "${title}" and the channel name: "${channelName}" and the discription: "${description}"
 
         Classify strictly as "productive" or "unproductive".
         Provide a concise explanation.
@@ -312,11 +308,13 @@ app.post('/api/analyze-domain', async (req, res) => {
       Analyze: "${domain}"
     `;
     
-    // Use the same gemini model for classification. 
-    // Simplified the API call to match the working implementation in analyzeYouTubeTitle.
-    const result = await model.generateContent(prompt);
-    const response = result.response;
-    let responseText = response?.text()?.trim() || '';
+    // Use the same gemini model for classification
+    const response = await model.generateContent({ // Pass as object for new API
+      contents: [{ role: 'user', parts: [{ text: prompt }]}]
+    });
+    
+    const result = response.response;
+    let responseText = result?.text()?.trim() || '';
     let classificationResult;
 
     try {
