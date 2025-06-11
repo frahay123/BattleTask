@@ -231,6 +231,32 @@ app.post('/api/classify-domain', async (req, res) => {
   }
 });
 
+// Endpoint kept for backward-compatibility: analyze a title (YouTube only)
+app.post('/api/analyze-title', async (req, res) => {
+  try {
+    const { title, url, channelName, description } = req.body;
+
+    if (!title || !url) {
+      return res.status(400).json({ success: false, error: 'Title and URL are required.' });
+    }
+
+    if (!url.includes('youtube.com')) {
+      return res.status(400).json({ success: false, error: 'This endpoint now only supports YouTube URLs.' });
+    }
+
+    const cleanTitle = validator.escape(title);
+    const cleanChannelName = channelName ? validator.escape(channelName) : '';
+    const cleanDescription = description ? validator.escape(description) : '';
+
+    const analysis = await analyzeYouTubeContent(cleanTitle, cleanChannelName, cleanDescription);
+
+    res.json({ success: true, ...analysis });
+  } catch (error) {
+    console.error('Error in /api/analyze-title:', error);
+    res.status(500).json({ success: false, error: 'Internal server error.' });
+  }
+});
+
 // Start the server
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
