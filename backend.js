@@ -33,6 +33,10 @@ const PORT = process.env.PORT || 3000;
 const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
 const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
 
+// For environments like Cloud Run that use a proxy, this setting is required
+// for express-rate-limit to correctly identify the client IP address.
+app.set('trust proxy', true);
+
 // Middleware
 app.use(cors());
 app.use(bodyParser.json());
