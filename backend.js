@@ -92,7 +92,7 @@ async function analyzeYouTubeTitle(title) {
 
   try {
     const prompt = `
-        Analyze this YouTube video title: "${title}" and the channel name: "${channelName}" and the discription: "${description}"
+        Analyze this YouTube video title: "${title}"
 
         Classify strictly as "productive" or "unproductive".
         Provide a concise explanation.
