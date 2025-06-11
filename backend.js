@@ -41,19 +41,9 @@ app.set('trust proxy', true);
 app.use(cors());
 app.use(bodyParser.json());
 
-// General IP-based rate limiting:
-// This acts as a broad, initial shield.
-const ipLimiter = rateLimit({
-  windowMs: 24 * 60 * 60 * 1000, // 24 hours
-  max: 300, // Max 300 requests per IP per day (can be adjusted)
-  message: { success: false, error: 'Too many requests from this IP, try again tomorrow.' },
-  standardHeaders: true, // Return rate limit info in the `RateLimit-*` headers
-  legacyHeaders: false, // Disable the `X-RateLimit-*` headers
-});
-app.use('/api/', ipLimiter);
-
-// Per-user/device rate limiting (more specific)
-// This will be the primary limiter for identified requests.
+// Per-user/device rate limiting is the primary limiter.
+// It uses a device ID if available, otherwise falls back to the client's IP address.
+// The general IP-based limiter has been removed as this one already provides an IP fallback.
 const userDeviceLimiter = rateLimit({
   windowMs: 24 * 60 * 60 * 1000, // 24 hours
   max: 300, // Hard limit of 300 requests per day per identified key
@@ -82,6 +72,31 @@ const userDeviceLimiter = rateLimit({
 app.use('/api/', userDeviceLimiter); // Apply this limiter to all /api/ routes
 
 /**
+ * Extracts a JSON object from a string, handling markdown code blocks.
+ * @param {string} text The text response from the AI.
+ * @returns {object|null} The parsed JSON object or null if parsing fails.
+ */
+function extractJsonFromResponse(text) {
+  if (!text) return null;
+  
+  let jsonString = text;
+  
+  // Handle cases where the JSON is wrapped in ```json ... ``` or ``` ... ```
+  if (jsonString.startsWith('```json')) {
+    jsonString = jsonString.substring(7, jsonString.length - 3).trim();
+  } else if (jsonString.startsWith('```')) {
+    jsonString = jsonString.substring(3, jsonString.length - 3).trim();
+  }
+
+  try {
+    return JSON.parse(jsonString);
+  } catch (error) {
+    console.error('Failed to parse JSON from AI response. Text:', text, 'Error:', error);
+    return null;
+  }
+}
+
+/**
  * Analyze a YouTube video title to determine if it's productive content
  */
 async function analyzeYouTubeTitle(title) {
@@ -96,7 +111,7 @@ async function analyzeYouTubeTitle(title) {
 
   try {
     const prompt = `
-        Analyze this YouTube video title: "${title}"
+        Analyze this YouTube video title: "${title} and channel name: ${channelName} and channel description: ${channelDescription}"
 
         Classify strictly as "productive" or "unproductive".
         Provide a concise explanation.
@@ -140,81 +155,80 @@ async function analyzeYouTubeTitle(title) {
  */
 function processGeminiTitleResponse(response) {
   try {
-    let responseText = response.text();
+    const responseText = response.text();
+    const analysis = extractJsonFromResponse(responseText);
 
-    // Check if the response is valid JSON by removing markdown formatting if present
-    if (responseText.includes('```json')) {
-      responseText = responseText.split('```json')[1].split('```')[0].trim();
-    } else if (responseText.includes('```')) {
-      responseText = responseText.split('```')[1].split('```')[0].trim();
-    }
-
-    // Try to parse JSON
-    try {
-      const analysis = JSON.parse(responseText);
-
-      // Ensure required fields exist and have correct types
-      if (typeof analysis.isProductive !== 'boolean') {
-        analysis.isProductive = false;
-      }
-      
-      if (typeof analysis.score !== 'number') {
-        const parsedScore = parseFloat(analysis.score);
-        analysis.score = !isNaN(parsedScore) ? parsedScore : 0;
-      }
-      
-      // Normalize score to 0-100 range (prompt requests 0-100, this is a safeguard)
-      if (analysis.score <= 1 && analysis.score >= 0 && analysis.score !== 0 && analysis.score !== 1) {
-        analysis.score = Math.round(analysis.score * 100);
-      } else {
-        analysis.score = Math.min(100, Math.max(0, analysis.score));
-      }
-      
-      if (!Array.isArray(analysis.categories)) {
-        analysis.categories = [];
-      }
-      if (typeof analysis.explanation !== 'string') {
-        analysis.explanation = '';
-      }
-
-      return analysis;
-    } catch (jsonError) {
-      console.error('Error parsing JSON from title analysis:', jsonError);
-      
-      // If can't parse JSON, fallback to text analysis
+    if (!analysis) {
+      // If JSON parsing fails, fall back to simple text analysis.
       const text = responseText.toLowerCase();
-      
-      // Default classification
       let isProductive = false;
       let score = 30;
-      let categories = ['Unknown'];
-      let explanation = 'Could not parse response';
-      
-      // Check for educational indicators in the text
-      if (text.includes('productive') || 
-          text.includes('education') || 
-          text.includes('academic') || 
-          text.includes('learning')) {
+      if (text.includes('productive') || text.includes('education') || text.includes('academic') || text.includes('learning')) {
         isProductive = true;
         score = 75;
-        categories = ['Education'];
-        explanation = 'Educational content detected';
       }
-      
       return {
         isProductive,
         score,
-        categories,
-        explanation
+        categories: ['Unknown'],
+        explanation: 'Could not parse structured response from AI.'
       };
     }
-  } catch (error) {
-    console.error('Error processing title response:', error);
+
+    // Ensure required fields exist and have correct types
+    if (typeof analysis.isProductive !== 'boolean') {
+      analysis.isProductive = false;
+    }
+    
+    if (typeof analysis.score !== 'number') {
+      const parsedScore = parseFloat(analysis.score);
+      analysis.score = !isNaN(parsedScore) ? parsedScore : 0;
+    }
+    
+    // Normalize score to 0-100 range (prompt requests 0-100, this is a safeguard)
+    if (analysis.score <= 1 && analysis.score >= 0 && analysis.score !== 0 && analysis.score !== 1) {
+      analysis.score = Math.round(analysis.score * 100);
+    } else {
+      analysis.score = Math.min(100, Math.max(0, analysis.score));
+    }
+    
+    if (!Array.isArray(analysis.categories)) {
+      analysis.categories = [];
+    }
+    if (typeof analysis.explanation !== 'string') {
+      analysis.explanation = '';
+    }
+
+    return analysis;
+  } catch (jsonError) {
+    console.error('Error parsing JSON from title analysis:', jsonError);
+    
+    // If can't parse JSON, fallback to text analysis
+    const responseText = response.text() || '';
+    const text = responseText.toLowerCase();
+    
+    // Default classification
+    let isProductive = false;
+    let score = 30;
+    let categories = ['Unknown'];
+    let explanation = 'Could not parse response';
+    
+    // Check for educational indicators in the text
+    if (text.includes('productive') || 
+        text.includes('education') || 
+        text.includes('academic') || 
+        text.includes('learning')) {
+      isProductive = true;
+      score = 75;
+      categories = ['Education'];
+      explanation = 'Educational content detected';
+    }
+    
     return {
-      isProductive: false,
-      score: 0,
-      categories: [],
-      explanation: 'Error processing analysis'
+      isProductive,
+      score,
+      categories,
+      explanation
     };
   }
 }
@@ -316,25 +330,19 @@ app.post('/api/analyze-domain', async (req, res) => {
     // Simplified the API call to match the working implementation in analyzeYouTubeTitle.
     const result = await model.generateContent(prompt);
     const response = result.response;
-    let responseText = response?.text()?.trim() || '';
-    let classificationResult;
+    const responseText = response?.text()?.trim() || '';
+    let classificationResult = extractJsonFromResponse(responseText);
 
-    try {
-      if (responseText.includes('```json')) {
-        responseText = responseText.split('```json')[1].split('```')[0].trim();
-      } else if (responseText.includes('```')) {
-        responseText = responseText.split('```')[1].split('```')[0].trim();
-      }
-      classificationResult = JSON.parse(responseText);
-
+    if (classificationResult) {
       // Ensure classification is one of our expected values
       if (!['productive', 'unproductive'].includes(classificationResult.classification)) {
         console.warn(`Unexpected Gemini response for domain classification: "${classificationResult.classification}". Defaulting to unproductive for domain: ${domain}`);
         classificationResult.classification = 'unproductive';
         classificationResult.justification = classificationResult.justification || 'Unexpected response from AI.';
       }
-    } catch (e) {
-      console.error(`Error parsing JSON for domain classification (${domain}):`, e, "Response text:", responseText);
+    } else {
+      // This block runs if extractJsonFromResponse returns null (i.e., parsing failed)
+      console.error(`Could not parse JSON for domain classification (${domain}). Response text:`, responseText);
       classificationResult = {
         classification: 'unproductive', // Default on error
         justification: 'Error parsing AI response.'
