@@ -312,13 +312,11 @@ app.post('/api/analyze-domain', async (req, res) => {
       Analyze: "${domain}"
     `;
     
-    // Use the same gemini model for classification
-    const response = await model.generateContent({ // Pass as object for new API
-      contents: [{ role: 'user', parts: [{ text: prompt }]}]
-    });
-    
-    const result = response.response;
-    let responseText = result?.text()?.trim() || '';
+    // Use the same gemini model for classification. 
+    // Simplified the API call to match the working implementation in analyzeYouTubeTitle.
+    const result = await model.generateContent(prompt);
+    const response = result.response;
+    let responseText = response?.text()?.trim() || '';
     let classificationResult;
 
     try {
