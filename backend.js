@@ -123,7 +123,7 @@ async function analyzeYouTubeContent(title, channelName, description) {
         1. Title, channel, or description indicate: Lectures, tutorials, documentaries, academic lessons (math, science, history, programming, languages, etc.), how-to guides.
 
         If content matches CRITICAL RULES, it IS "productive".
-        Content focused on entertainment (gaming, vlogs, comedy) is "unproductive".
+        Content focused on entertainment (gaming, vlogs, comedy, sports, songs, anything entertainment, shopping) is "unproductive".
       `;
 
     const result = await model.generateContent(prompt);
