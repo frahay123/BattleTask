@@ -80,7 +80,7 @@ app.use('/api/', userDeviceLimiter); // Apply this limiter to all /api/ routes
 /**
  * Analyze a YouTube video title to determine if it's productive content
  */
-async function analyzeYouTubeTitle(title, channelName = '') {
+async function analyzeYouTubeTitle(title) {
   if (!title || title.trim() === '' || title === 'New Tab') {
     return {
       isProductive: false,
@@ -92,7 +92,7 @@ async function analyzeYouTubeTitle(title, channelName = '') {
 
   try {
     const prompt = `
-        Analyze this YouTube video titled "${title}" from channel "${channelName}".
+        Analyze this YouTube video title: "${title}" and the channel name: "${channelName}" and the discription: "${description}"
 
         Classify strictly as "productive" or "unproductive".
         Provide a concise explanation.
@@ -230,7 +230,7 @@ app.get('/', (req, res) => {
 // Analyze a title directly from the frontend
 app.post('/api/analyze-youtube-title', async (req, res) => {
   try {
-    const { title, url, channelName } = req.body;
+    const { title, url } = req.body;
     
     if (!title) {
       return res.status(400).json({ success: false, error: 'Title is required' });
@@ -242,9 +242,8 @@ app.post('/api/analyze-youtube-title', async (req, res) => {
     
     // Sanitize title
     const cleanTitle = validator.escape(title);
-    const cleanChannelName = channelName ? validator.escape(channelName) : '';
     
-    const analysis = await analyzeYouTubeTitle(cleanTitle, cleanChannelName);
+    const analysis = await analyzeYouTubeTitle(cleanTitle);
     
     res.json({
       success: true,
