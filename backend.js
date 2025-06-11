@@ -98,8 +98,12 @@ function extractJsonFromResponse(text) {
 
 /**
  * Analyze a YouTube video title to determine if it's productive content
+ * @param {string} title The title of the YouTube video.
+ * @param {string} channelName The name of the YouTube channel.
+ * @param {string} description The description of the YouTube video.
+ * @returns {Promise<Object>} A promise that resolves to the analysis object.
  */
-async function analyzeYouTubeTitle(title) {
+async function analyzeYouTubeTitle(title, channelName, description) {
   if (!title || title.trim() === '' || title === 'New Tab') {
     return {
       isProductive: false,
@@ -111,7 +115,11 @@ async function analyzeYouTubeTitle(title) {
 
   try {
     const prompt = `
-        Analyze this YouTube video title: "${title} and channel name: ${channelName} and channel description: ${channelDescription}"
+        Analyze this YouTube video based on its title, channel, and description.
+
+        Title: "${title}"
+        Channel: "${channelName || 'N/A'}"
+        Description (first 200 chars): "${(description || 'N/A').substring(0, 200)}"
 
         Classify strictly as "productive" or "unproductive".
         Provide a concise explanation.
@@ -127,10 +135,10 @@ async function analyzeYouTubeTitle(title) {
         }
 
         CRITICAL RULES FOR "productive" (score 75-100):
-        1. Title indicates: Lectures, tutorials, documentaries, academic lessons (math, science, history, programming, languages, etc.), how-to guides.
+        1. Title, channel, or description indicate: Lectures, tutorials, documentaries, academic lessons (math, science, history, programming, languages, etc.), how-to guides.
         
-        If title matches CRITICAL RULES, it IS "productive".
-        Titles suggesting primarily entertainment are "unproductive".
+        If content matches CRITICAL RULES, it IS "productive".
+        Content focused on entertainment (gaming, vlogs, comedy) is "unproductive".
       `;
       
       // Make request to Gemini API
@@ -248,7 +256,7 @@ app.get('/', (req, res) => {
 // Analyze a title directly from the frontend
 app.post('/api/analyze-youtube-title', async (req, res) => {
   try {
-    const { title, url } = req.body;
+    const { title, url, channelName, description } = req.body;
     
     if (!title) {
       return res.status(400).json({ success: false, error: 'Title is required' });
@@ -258,10 +266,12 @@ app.post('/api/analyze-youtube-title', async (req, res) => {
         return res.status(400).json({ success: false, error: 'A YouTube URL is required for this endpoint.' });
     }
     
-    // Sanitize title
+    // Sanitize inputs
     const cleanTitle = validator.escape(title);
+    const cleanChannelName = channelName ? validator.escape(channelName) : '';
+    const cleanDescription = description ? validator.escape(description) : '';
     
-    const analysis = await analyzeYouTubeTitle(cleanTitle);
+    const analysis = await analyzeYouTubeTitle(cleanTitle, cleanChannelName, cleanDescription);
     
     res.json({
       success: true,
