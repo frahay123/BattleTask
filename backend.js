@@ -41,27 +41,34 @@ app.set('trust proxy', true);
 app.use(cors());
 app.use(bodyParser.json());
 
-// Per-user/device rate limiting is the primary limiter.
-// It uses a device ID if available, otherwise falls back to the client's IP address.
-const userDeviceLimiter = rateLimit({
-  windowMs: 24 * 60 * 60 * 1000, // 24 hours
-  max: 300, // Hard limit of 300 requests per day per identified key
-  keyGenerator: (req) => {
-    // 2. Use Client-Generated Device ID from header
+// -------- Rate Limiting --------
+// 1. Device-ID based limiter (stricter – 300 req / day)
+const deviceLimiter = rateLimit({
+  windowMs: 24 * 60 * 60 * 1000, // 24 h
+  max: 300,
+  skip: (req) => {
     const deviceId = req.headers['x-device-id'];
-    if (deviceId && validator.isUUID(deviceId)) {
-      // Ensure it's a valid UUID to prevent misuse of this header
-      return `device-${deviceId}`;
-    }
-
-    // 3. Fallback to IP address if no valid User ID or Device ID is found
-    return `ip-${req.ip}`;
+    // Skip if no valid UUID – let the IP limiter handle it instead
+    return !(deviceId && validator.isUUID(deviceId));
   },
-  message: { success: false, error: 'API rate limit exceeded for this user/device. Please try again tomorrow.' },
+  keyGenerator: (req) => `device-${req.headers['x-device-id']}`,
+  message: { success: false, error: 'Daily device limit reached. Try again tomorrow.' },
   standardHeaders: true,
   legacyHeaders: false,
 });
-app.use('/api/', userDeviceLimiter);
+
+// 2. IP based fallback limiter (broader – 1000 req / day)
+const ipLimiter = rateLimit({
+  windowMs: 24 * 60 * 60 * 1000,
+  max: 300,
+  keyGenerator: (req) => `ip-${req.ip}`,
+  message: { success: false, error: 'Daily IP limit reached. Try again tomorrow.' },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+// Apply both limiters to all API routes (device first, then IP)
+app.use('/api/', deviceLimiter, ipLimiter);
 
 /**
  * Extracts a JSON object from a string, handling markdown code blocks.
