@@ -122,16 +122,16 @@ async function analyzeYouTubeContent(title, channelName, description) {
         {
           "isProductive": boolean,
           "score": number,
-          "categories": ["1-string"],
-          "explanation": "1-string"
+          "categories": ["string"],
+          "explanation": "string"
         }
-        Aything that is on the border is non-produtive, If only 100% sure list it as produtive.
+       
 
         CRITICAL RULES FOR "productive" (score 75-100):
         1. Title, channel, or description indicate: Lectures, tutorials, documentaries, academic lessons (math, science, history, programming, languages, etc.), how-to guides.
 
-        If content matches CRITICAL RULES, it IS "productive".
-        Content focused on entertainment (gaming, vlogs, comedy, sports, songs, anything entertainment, shopping) is "unproductive".
+        If content matches CRITICAL RULES, it IS "non-productive".
+        Content focused on entertainment (gaming, vlogs, comedy, sports, songs, anything entertainment, shopping,SNL) is "unproductive".
       `;
 
     const result = await model.generateContent(prompt);
