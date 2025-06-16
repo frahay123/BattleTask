@@ -122,9 +122,10 @@ async function analyzeYouTubeContent(title, channelName, description) {
         {
           "isProductive": boolean,
           "score": number,
-          "categories": ["string"],
-          "explanation": "string"
+          "categories": ["1-string"],
+          "explanation": "1-string"
         }
+        Aything that is on the border is non-produtive, If only 100% sure list it as produtive.
 
         CRITICAL RULES FOR "productive" (score 75-100):
         1. Title, channel, or description indicate: Lectures, tutorials, documentaries, academic lessons (math, science, history, programming, languages, etc.), how-to guides.
