@@ -232,6 +232,7 @@ app.post('/api/classify-domain', async (req, res) => {
     }
 
     console.log(`Gemini classified domain: ${domain} as ${classificationResult.classification}`);
+    console.log('Client IP:', req.headers['x-forwarded-for'] || req.ip);
     return res.status(200).json({ ...classificationResult, domain: domain });
 
   } catch (error) {
