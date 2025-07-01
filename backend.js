@@ -232,7 +232,22 @@ app.post('/api/classify-domain', async (req, res) => {
     }
 
     console.log(`Gemini classified domain: ${domain} as ${classificationResult.classification}`);
-    console.log('Client IP:', req.headers['x-forwarded-for'] || req.ip);
+    // backend.js – inside your Express handler
+  try {
+    const ip = req.headers['x-forwarded-for']?.split(',')[0] || req.ip;
+
+    // One-line lookup (ipinfo.io, 50 k req/month free)
+    const { country } = await fetch(`https://ipinfo.io/${ip}/json`)
+                               .then(r => r.json())
+                               .catch(() => ({}));   // fail-safe
+
+    console.log(`Classify-domain called from country: ${country || 'unknown'}`);
+
+    // …rest of your handler…
+  } catch (err) {
+    console.error(err);
+    res.status(500).end();
+  }
     return res.status(200).json({ ...classificationResult, domain: domain });
 
   } catch (error) {
