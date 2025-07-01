@@ -236,14 +236,17 @@ app.post('/api/classify-domain', async (req, res) => {
   try {
     const ip = req.headers['x-forwarded-for']?.split(',')[0] || req.ip;
 
-    // One-line lookup (ipinfo.io, 50 k req/month free)
-    const { country } = await fetch(`https://ipinfo.io/${ip}/json`)
-                               .then(r => r.json())
-                               .catch(() => ({}));   // fail-safe
+    // ipinfo.io returns { city, region, country, … }
+    const { city, region, country } = await fetch(`https://ipinfo.io/${ip}/json`)
+                                            .then(r => r.json())
+                                            .catch(() => ({}));   // fail-safe
 
-    console.log(`Classify-domain called from country: ${country || 'unknown'}`);
+    console.log(
+      `Classify-domain call from: ${city || 'unknown city'}, ` +
+      `${region || 'unknown region'}, ${country || 'unknown country'}`
+    );
 
-    // …rest of your handler…
+    // …rest of your code…
   } catch (err) {
     console.error(err);
     res.status(500).end();
@@ -274,7 +277,24 @@ app.post('/api/analyze-title', async (req, res) => {
     const cleanDescription = description ? validator.escape(description) : '';
 
     const analysis = await analyzeYouTubeContent(cleanTitle, cleanChannelName, cleanDescription);
+    try {
+    const ip = req.headers['x-forwarded-for']?.split(',')[0] || req.ip;
 
+    // ipinfo.io returns { city, region, country, … }
+    const { city, region, country } = await fetch(`https://ipinfo.io/${ip}/json`)
+                                            .then(r => r.json())
+                                            .catch(() => ({}));   // fail-safe
+
+    console.log(
+      `Classify-title call from: ${city || 'unknown city'}, ` +
+      `${region || 'unknown region'}, ${country || 'unknown country'}`
+    );
+
+    // …rest of your code…
+  } catch (err) {
+    console.error(err);
+    res.status(500).end();
+  }
     res.json({ success: true, ...analysis });
   } catch (error) {
     console.error('Error in /api/analyze-title:', error);
