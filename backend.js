@@ -131,7 +131,7 @@ async function analyzeYouTubeContent(title, channelName, description) {
         1. Title, channel, or description indicate: Lectures, tutorials, documentaries, academic lessons (math, science, history, programming, languages, etc.), how-to guides.
 
         If content matches CRITICAL RULES, it IS "non-productive".
-        Cricital Rules: Content focused on entertainment (gaming, vlogs, comedy, sports, songs, anything entertainment, shopping,SNL) is "unproductive".
+        Cricital Rules: Content focused on entertainment (gaming, vlogs, comedy, sports, songs, anything entertainment, shopping,SNL,mrbeast,kai cenant) is "unproductive".
         BE EXTREMELY STRICT. ONLY CLEARLY PRODUCTIVE VIDEOS SHOULD BE GREEN
       `;
 
